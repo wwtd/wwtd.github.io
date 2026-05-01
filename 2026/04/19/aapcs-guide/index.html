@@ -20,24 +20,32 @@
 
 <script class="next-config" data-name="main" type="application/json">{"hostname":"wwtd.github.io","root":"/","images":"/images","scheme":"Gemini","darkmode":true,"version":"8.27.0","exturl":false,"sidebar":{"position":"left","width_expanded":320,"width_dual_column":240,"display":"post","padding":18,"offset":12},"hljswrap":true,"codeblock":{"theme":{"light":"default","dark":"stackoverflow-dark"},"prism":{"light":"prism","dark":"prism-dark"},"copy_button":{"enable":true,"style":null,"show_result":true},"fold":{"enable":false,"height":500},"language":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"stickytabs":false,"motion":{"enable":true,"async":false,"duration":200,"transition":{"menu_item":"fadeInDown","post_block":"fadeIn","post_header":"fadeInDown","post_body":"fadeInDown","coll_header":"fadeInLeft","sidebar":"fadeInUp"}},"i18n":{"placeholder":"搜索...","empty":"没有找到任何搜索结果：${query}","hits_time":"找到 ${hits} 个搜索结果（用时 ${time} 毫秒）","hits":"找到 ${hits} 个搜索结果"},"path":"/search.json","localsearch":{"enable":true,"top_n_per_article":1,"unescape":false,"preload":false}}</script><script src="/js/config.js" defer></script>
 
-    <meta name="description" content="Personal blog powered by Hexo">
-<meta property="og:type" content="website">
-<meta property="og:title" content="WWTD&#39;s Blog">
-<meta property="og:url" content="https://wwtd.github.io/index.html">
+    <meta name="description" content="AAPCS简介AAPCS（Procedure Call Standard for Arm Architecture）,Arm架构下的调用标准，用于描述汇编语言与C代码交互时的行为规范。这里提到的PCS，本质是Arm 架构 ABI（Application Binary Interface）的核心组成。如果目光仅放到Arm-M 系列MCU搭配C语言的开发的话，PCS几乎就是ABI的全部内容。官方发布页">
+<meta property="og:type" content="article">
+<meta property="og:title" content="阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范">
+<meta property="og:url" content="https://wwtd.github.io/2026/04/19/aapcs-guide/index.html">
 <meta property="og:site_name" content="WWTD&#39;s Blog">
-<meta property="og:description" content="Personal blog powered by Hexo">
+<meta property="og:description" content="AAPCS简介AAPCS（Procedure Call Standard for Arm Architecture）,Arm架构下的调用标准，用于描述汇编语言与C代码交互时的行为规范。这里提到的PCS，本质是Arm 架构 ABI（Application Binary Interface）的核心组成。如果目光仅放到Arm-M 系列MCU搭配C语言的开发的话，PCS几乎就是ABI的全部内容。官方发布页">
 <meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://wwtd.github.io/2026/04/19/aapcs-guide/Fundamental_Data_Types.png">
+<meta property="og:image" content="https://wwtd.github.io/2026/04/19/aapcs-guide/Endianness_and_Byte_Ordering.png">
+<meta property="og:image" content="https://wwtd.github.io/2026/04/19/aapcs-guide/Core_Registers.png">
+<meta property="article:published_time" content="2026-04-19T12:00:00.000Z">
+<meta property="article:modified_time" content="2026-05-01T09:11:55.391Z">
 <meta property="article:author" content="wwtd">
+<meta property="article:tag" content="AAPCS">
+<meta property="article:tag" content="读书记录">
 <meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://wwtd.github.io/2026/04/19/aapcs-guide/Fundamental_Data_Types.png">
 
 
-<link rel="canonical" href="https://wwtd.github.io/">
+<link rel="canonical" href="https://wwtd.github.io/2026/04/19/aapcs-guide/">
 
 
-<script class="next-config" data-name="page" type="application/json">{"sidebar":"","isHome":true,"isPost":false,"lang":"zh-CN","comments":"","permalink":"","path":"index.html","title":""}</script>
+<script class="next-config" data-name="page" type="application/json">{"sidebar":"","isHome":false,"isPost":true,"lang":"zh-CN","comments":true,"permalink":"https://wwtd.github.io/2026/04/19/aapcs-guide/","path":"2026/04/19/aapcs-guide/","title":"阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范"}</script>
 
 <script class="next-config" data-name="calendar" type="application/json">""</script>
-<title>WWTD's Blog</title>
+<title>阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范 | WWTD's Blog</title>
   
 
 
@@ -89,7 +97,7 @@
 
     <a href="/" class="brand" rel="start">
       <i class="logo-line"></i>
-      <h1 class="site-title">WWTD's Blog</h1>
+      <p class="site-title">WWTD's Blog</p>
       <i class="logo-line"></i>
     </a>
       <p class="site-subtitle" itemprop="description">Welcome to my blog</p>
@@ -143,7 +151,7 @@
   
   <aside class="sidebar">
 
-    <div class="sidebar-inner sidebar-overview-active">
+    <div class="sidebar-inner sidebar-nav-active sidebar-toc-active">
       <ul class="sidebar-nav">
         <li class="sidebar-nav-toc">
           文章目录
@@ -156,6 +164,7 @@
       <div class="sidebar-panel-container">
         <!--noindex-->
         <div class="post-toc-wrap sidebar-panel">
+            <div class="post-toc animated"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#AAPCS%E7%AE%80%E4%BB%8B"><span class="nav-number">1.</span> <span class="nav-text">AAPCS简介</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BB%B6%E4%BC%B8%E5%86%85%E5%AE%B9"><span class="nav-number">1.1.</span> <span class="nav-text">延伸内容</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#AAPCS%E5%86%85%E5%AE%B9"><span class="nav-number">2.</span> <span class="nav-text">AAPCS内容</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B%E4%B8%8E%E5%AF%B9%E9%BD%90"><span class="nav-number">2.1.</span> <span class="nav-text">数据类型与对齐</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%9F%BA%E7%A1%80%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B"><span class="nav-number">2.1.1.</span> <span class="nav-text">基础数据类型</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%AD%97%E8%8A%82%E5%BA%8F%E4%B8%8E%E5%AD%97%E8%8A%82%E9%A1%BA%E5%BA%8F"><span class="nav-number">2.1.2.</span> <span class="nav-text">字节序与字节顺序</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%A4%8D%E5%90%88%E6%95%B0%E6%8D%AE%E7%B1%BB%E5%9E%8B"><span class="nav-number">2.1.3.</span> <span class="nav-text">复合数据类型</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#Aggregates"><span class="nav-number">2.1.3.1.</span> <span class="nav-text">Aggregates</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Unions"><span class="nav-number">2.1.3.2.</span> <span class="nav-text">Unions</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Arrays"><span class="nav-number">2.1.3.3.</span> <span class="nav-text">Arrays</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Bit-fields"><span class="nav-number">2.1.3.4.</span> <span class="nav-text">Bit-fields</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%90%8C%E6%9E%84%E8%81%9A%E5%90%88"><span class="nav-number">2.1.3.5.</span> <span class="nav-text">同构聚合</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#comment"><span class="nav-number">2.1.3.6.</span> <span class="nav-text">comment</span></a></li></ol></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%9F%BA%E7%A1%80%E8%BF%87%E7%A8%8B%E8%B0%83%E7%94%A8%E6%A0%87%E5%87%86"><span class="nav-number">2.2.</span> <span class="nav-text">基础过程调用标准</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%AF%84%E5%AD%98%E5%99%A8"><span class="nav-number">2.2.1.</span> <span class="nav-text">寄存器</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E6%A0%B8%E5%BF%83%E5%AF%84%E5%AD%98%E5%99%A8"><span class="nav-number">2.2.1.1.</span> <span class="nav-text">核心寄存器</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%8D%8F%E5%A4%84%E7%90%86%E5%99%A8%E5%AF%84%E5%AD%98%E5%99%A8"><span class="nav-number">2.2.1.2.</span> <span class="nav-text">协处理器寄存器</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E8%BF%87%E7%A8%8B%E3%80%81%E5%86%85%E5%AD%98%E4%B8%8E%E6%A0%88"><span class="nav-number">2.2.2.</span> <span class="nav-text">过程、内存与栈</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E6%A0%88"><span class="nav-number">2.2.2.1.</span> <span class="nav-text">栈</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%AD%90%E8%B0%83%E7%94%A8"><span class="nav-number">2.2.3.</span> <span class="nav-text">子调用</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E9%93%BE%E6%8E%A5%E5%99%A8%E4%BD%BF%E7%94%A8IP"><span class="nav-number">2.2.3.1.</span> <span class="nav-text">链接器使用IP</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E8%BF%94%E5%9B%9E%E5%80%BC"><span class="nav-number">2.2.4.</span> <span class="nav-text">返回值</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%8F%82%E6%95%B0%E4%BC%A0%E9%80%92"><span class="nav-number">2.2.5.</span> <span class="nav-text">参数传递</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#comment-1"><span class="nav-number">2.2.5.1.</span> <span class="nav-text">comment</span></a></li></ol></li></ol></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#Ending"><span class="nav-number">3.</span> <span class="nav-text">Ending</span></a></li></ol></div>
         </div>
         <!--/noindex-->
 
@@ -190,16 +199,17 @@
 
     </div>
 
-    <div class="main-inner index posts-expand">
+    <div class="main-inner post posts-expand">
 
-    
+
+  
 
 
 <div class="post-block">
   
   
 
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
+  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="zh-CN">
     <link itemprop="mainEntityOfPage" href="https://wwtd.github.io/2026/04/19/aapcs-guide/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
@@ -213,13 +223,13 @@
     </span>
 
     <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content=" | WWTD's Blog">
+      <meta itemprop="name" content="阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范 | WWTD's Blog">
       <meta itemprop="description" content="">
     </span>
       <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="/2026/04/19/aapcs-guide/" class="post-title-link" itemprop="url">阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范</a>
-        </h2>
+        <h1 class="post-title" itemprop="name headline">
+          阅读 AAPCS 笔记 —— 从寄存器到函数调用的 Arm 规范
+        </h1>
 
         <div class="post-meta-container">
           <div class="post-meta">
@@ -241,8 +251,7 @@
     
     
     
-    <div class="post-body" itemprop="articleBody">
-          <h1 id="AAPCS简介"><a href="#AAPCS简介" class="headerlink" title="AAPCS简介"></a>AAPCS简介</h1><p>AAPCS（Procedure Call Standard for Arm Architecture）,Arm架构下的调用标准，用于描述汇编语言与C代码交互时的行为规范。这里提到的PCS，本质是Arm 架构 ABI（Application Binary Interface）的核心组成。如果目光仅放到Arm-M 系列MCU搭配C语言的开发的话，PCS几乎就是ABI的全部内容。<br><a target="_blank" rel="noopener" href="https://github.com/Arm-software/abi-aa/releases">官方发布页</a><br>当前最新的<a target="_blank" rel="noopener" href="https://github.com/Arm-software/abi-aa/releases/download/2025Q4/aapcs32.pdf">aapcs32</a></p>
+    <div class="post-body" itemprop="articleBody"><h1 id="AAPCS简介"><a href="#AAPCS简介" class="headerlink" title="AAPCS简介"></a>AAPCS简介</h1><p>AAPCS（Procedure Call Standard for Arm Architecture）,Arm架构下的调用标准，用于描述汇编语言与C代码交互时的行为规范。这里提到的PCS，本质是Arm 架构 ABI（Application Binary Interface）的核心组成。如果目光仅放到Arm-M 系列MCU搭配C语言的开发的话，PCS几乎就是ABI的全部内容。<br><a target="_blank" rel="noopener" href="https://github.com/Arm-software/abi-aa/releases">官方发布页</a><br>当前最新的<a target="_blank" rel="noopener" href="https://github.com/Arm-software/abi-aa/releases/download/2025Q4/aapcs32.pdf">aapcs32</a></p>
 <h2 id="延伸内容"><a href="#延伸内容" class="headerlink" title="延伸内容"></a>延伸内容</h2><p>一般来说，每个架构都有自己的PCS。有的时候一个架构可能会有多种调用约定，比如x86 (32位)曾经有cdecl、stdcall、fastcall、pascal 等多种调用约定；而x86-64 (64位)也有System V ABI（Linux、macOS）和Microsoft x64 Calling Convention（Windows）。由于Arm公司的强势与统一，Arm早早定义了全套标准的AAPCS，因此这对开发者更加友好。<br>C++的ABI兼容是另一个问题，需要单独讨论了。</p>
 <h1 id="AAPCS内容"><a href="#AAPCS内容" class="headerlink" title="AAPCS内容"></a>AAPCS内容</h1><p>以2025Q4的aapcs32 为例，先看目录，大致看看里面都包含了什么。</p>
 <details>
@@ -343,7 +352,6 @@
 <h4 id="comment-1"><a href="#comment-1" class="headerlink" title="comment"></a>comment</h4><p>这一章节其实是比较核心的内容，对典型场景的行为模式做了规范。</p>
 <h1 id="Ending"><a href="#Ending" class="headerlink" title="Ending"></a>Ending</h1><p>AAPCS 整体上还是比较底层视角的描述，有很多的细节是应用开发者所无需了解的。但是，尤其是在深度的问题排查时，来自AAPCS的一些说明可以帮助我们更好的理解汇编源码。小册子本身也不长，读完至少能看懂反汇编里的出入栈、参数传递、返回值的处理。</p>
 
-      
     </div>
 
     
@@ -351,171 +359,26 @@
     
 
     <footer class="post-footer">
-        <div class="post-eof"></div>
-      
+          <div class="post-tags">
+              <a href="/tags/AAPCS/" rel="tag"># AAPCS</a>
+              <a href="/tags/%E8%AF%BB%E4%B9%A6%E8%AE%B0%E5%BD%95/" rel="tag"># 读书记录</a>
+          </div>
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-item">
+                <a href="/2026/03/26/bookmark/" rel="prev" title="网站收藏夹">
+                  <i class="fa fa-angle-left"></i> 网站收藏夹
+                </a>
+            </div>
+            <div class="post-nav-item">
+            </div>
+          </div>
     </footer>
   </article>
 </div>
 
-
-
-
-    
-
-
-<div class="post-block">
-  
-  
-
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
-    <link itemprop="mainEntityOfPage" href="https://wwtd.github.io/2026/03/26/bookmark/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="wwtd">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="WWTD's Blog">
-      <meta itemprop="description" content="Personal blog powered by Hexo">
-    </span>
-
-    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content=" | WWTD's Blog">
-      <meta itemprop="description" content="">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="/2026/03/26/bookmark/" class="post-title-link" itemprop="url">网站收藏夹</a>
-        </h2>
-
-        <div class="post-meta-container">
-          <div class="post-meta">
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar"></i>
-      </span>
-      <span class="post-meta-item-text">发表于</span>
-
-      <time title="创建时间：2026-03-26 20:50:00" itemprop="dateCreated datePublished" datetime="2026-03-26T20:50:00+08:00">2026-03-26</time>
-    </span>
-
-  
-</div>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-          <p>网上冲浪多了，经常看到很好的网站和博客，有时候欣赏一会就放进浏览器收藏夹吃灰了。转念一想，不如找个地方挂出来晒一晒，利己利他。</p>
-<h1 id="ruanx-net"><a href="#ruanx-net" class="headerlink" title="ruanx.net"></a><a target="_blank" rel="noopener" href="https://ruanx.net/">ruanx.net</a></h1><p>这里是一个很好的博客,最开始是搜索嵌入式相关的内容发现的。后来发现博主的其他领域内容也很好，读了下都很受益。博主可能比我还小两岁，汗颜哇。</p>
-<h1 id="lujji-github-io-blog"><a href="#lujji-github-io-blog" class="headerlink" title="lujji.github.io&#x2F;blog&#x2F;"></a><a target="_blank" rel="noopener" href="https://lujji.github.io/blog/">lujji.github.io&#x2F;blog&#x2F;</a></h1><p>这里是一个嵌入式相关的博客，我是被stm8相关bare mental编程的内容吸引过来的，博主的工作做的很扎实，偶尔贴的图也工工整整、赏心悦目。就是停更许久了。</p>
-<h1 id="zhailog-com"><a href="#zhailog-com" class="headerlink" title="zhailog.com&#x2F;"></a><a target="_blank" rel="noopener" href="https://zhailog.com/">zhailog.com&#x2F;</a></h1><p>这里是一个比较关注NFC的博主个站，我是搞proxmark3从B站发现的，那段时间对NFC的知识非常急需，从这个博主这里学了一些。但是需要指出，这个博主的方向其实更偏向日常的NFC卡片爱好者，就是告诉你当前爱好者主流工具有哪些，然后教你怎么用的。如果你需要一些用于商业用途的开发或者是产品，这个可以带你很好的入门。博主的图做的嘎嘎好</p>
-<h1 id="vibevibe-cn"><a href="#vibevibe-cn" class="headerlink" title="vibevibe.cn&#x2F;"></a><a target="_blank" rel="noopener" href="https://www.vibevibe.cn/">vibevibe.cn&#x2F;</a></h1><p>这里是一个关于vibe coding的可以说是布道网站吧，我觉得这个网站比较适合分享给对ai coding有兴趣但是没有coding经验的同学来启蒙，同时自行摸索的同学可以从这里刷一遍名词解释，中文网站阅读友好。</p>
-<h1 id="csdiy-wiki"><a href="#csdiy-wiki" class="headerlink" title="csdiy.wiki&#x2F;"></a><a target="_blank" rel="noopener" href="https://csdiy.wiki/">csdiy.wiki&#x2F;</a></h1><p>在AI显学的时代，如果你还要学一些古典的手工编码，对某个领域或者编程语言感兴趣，这里算是有一个小小的路书，帮你指下路。</p>
-<h1 id="xuanxuanblingbling-github-io"><a href="#xuanxuanblingbling-github-io" class="headerlink" title="xuanxuanblingbling.github.io&#x2F;"></a><a target="_blank" rel="noopener" href="https://xuanxuanblingbling.github.io/">xuanxuanblingbling.github.io&#x2F;</a></h1><p>实话说，有点忘记怎么翻到这个博客了，回顾了一下应该是偏安全方向的了，可能是之前做密码学的时候搜到的，他的博客名特别又好记，就一直有这个记忆。同样停更一段时间了</p>
-<h1 id="ruanyifeng-com-blog"><a href="#ruanyifeng-com-blog" class="headerlink" title="ruanyifeng.com&#x2F;blog&#x2F;"></a><a target="_blank" rel="noopener" href="https://www.ruanyifeng.com/blog/">ruanyifeng.com&#x2F;blog&#x2F;</a></h1><p>阮老师的博客那是不必多言了，有口皆碑了。前AI时代，如果你想学什么东西刚好阮老师有文章写了的话，那这篇文章大概率是质量远超CSDN的。然后科技周报栏目也不错，可以看看新鲜事。主要是一件事做的久了，自然就形成了口碑，这就是品牌的力量。</p>
-<h1 id="安富莱嵌入式周报"><a href="#安富莱嵌入式周报" class="headerlink" title="安富莱嵌入式周报"></a><a target="_blank" rel="noopener" href="https://forum.anfulai.cn//forum.php?mod=forumdisplay&fid=12&filter=typeid&typeid=104">安富莱嵌入式周报</a></h1><p>嵌入式方向的新鲜事汇总，也是坚持了很多期。可以看看别人都用嵌入式做了什么有意思的事情，有的时候灵感真的是比技术重要的，都看看别人在干嘛，不要老自己发呆。</p>
-<h1 id="hackaday-com"><a href="#hackaday-com" class="headerlink" title="hackaday.com&#x2F;"></a><a target="_blank" rel="noopener" href="https://hackaday.com/">hackaday.com&#x2F;</a></h1><p>国外的硬件骇客论坛，很多新鲜玩意儿。</p>
-<h1 id="beginners-re"><a href="#beginners-re" class="headerlink" title="beginners.re&#x2F;"></a><a target="_blank" rel="noopener" href="https://beginners.re/">beginners.re&#x2F;</a></h1><p>关于汇编的好东西</p>
-<h1 id="hacker-news"><a href="#hacker-news" class="headerlink" title="hacker news"></a><a target="_blank" rel="noopener" href="https://news.ycombinator.com/">hacker news</a></h1><p>权威，无需多言</p>
-<h1 id="oshwhub-com"><a href="#oshwhub-com" class="headerlink" title="oshwhub.com&#x2F;"></a><a target="_blank" rel="noopener" href="https://oshwhub.com/">oshwhub.com&#x2F;</a></h1><p>立创搞的硬件开源平台，实话说逼格不如hackaday，但是里面也有很多大佬。我愿意称之为更适合中国宝宝国情的硬件开源平台。</p>
-<h1 id="qbitai-com"><a href="#qbitai-com" class="headerlink" title="qbitai.com&#x2F;"></a><a target="_blank" rel="noopener" href="https://www.qbitai.com/">qbitai.com&#x2F;</a></h1><p>用于看LLM这一轮爆发的各种八卦的，不对，也算是行业进展吧。程序员可能是最先关注也最深刻被AI影响的行业，我们静观其变。</p>
-<h1 id="latepost-com"><a href="#latepost-com" class="headerlink" title="latepost.com&#x2F;"></a><a target="_blank" rel="noopener" href="https://www.latepost.com/">latepost.com&#x2F;</a></h1><p>这里主要是关注明星企业的行业故事了，包括新能源、互联网、大模型，增长见闻吧。</p>
-
-      
-    </div>
-
-    
-    
-    
-
-    <footer class="post-footer">
-        <div class="post-eof"></div>
-      
-    </footer>
-  </article>
-</div>
-
-
-
-
-    
-
-
-<div class="post-block">
-  
-  
-
-  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="">
-    <link itemprop="mainEntityOfPage" href="https://wwtd.github.io/2026/03/24/workflow/">
-
-    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
-      <meta itemprop="name" content="wwtd">
-    </span>
-
-    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
-      <meta itemprop="name" content="WWTD's Blog">
-      <meta itemprop="description" content="Personal blog powered by Hexo">
-    </span>
-
-    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
-      <meta itemprop="name" content=" | WWTD's Blog">
-      <meta itemprop="description" content="">
-    </span>
-      <header class="post-header">
-        <h2 class="post-title" itemprop="name headline">
-          <a href="/2026/03/24/workflow/" class="post-title-link" itemprop="url">怎么提交博客</a>
-        </h2>
-
-        <div class="post-meta-container">
-          <div class="post-meta">
-    <span class="post-meta-item">
-      <span class="post-meta-item-icon">
-        <i class="far fa-calendar"></i>
-      </span>
-      <span class="post-meta-item-text">发表于</span>
-
-      <time title="创建时间：2026-03-24 18:00:00" itemprop="dateCreated datePublished" datetime="2026-03-24T18:00:00+08:00">2026-03-24</time>
-    </span>
-
-  
-</div>
-
-        </div>
-      </header>
-
-    
-    
-    
-    <div class="post-body" itemprop="articleBody">
-          <h1 id="怎么提交博客"><a href="#怎么提交博客" class="headerlink" title="怎么提交博客"></a>怎么提交博客</h1><p>当前部署的hexo，分mian 和 source两个分支。往source文件夹下写markdown，推到云端后会自动触发流水线渲染到main分支。</p>
-<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">touch</span> <span class="built_in">source</span>/_posts/xxx.md</span><br><span class="line"><span class="comment"># write something</span></span><br><span class="line">hexo s</span><br><span class="line"><span class="comment"># feel ok</span></span><br><span class="line">git add <span class="built_in">source</span>/_posts/xxx.md</span><br><span class="line">git commit -m <span class="string">&quot;xxxx&quot;</span></span><br><span class="line">git push origin <span class="built_in">source</span></span><br></pre></td></tr></table></figure>
-
-<p>超链接语法和原生markdown没区别</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">[github](https://github.com)</span><br></pre></td></tr></table></figure>
-
-<p>但是如果贴图的话，用Post Asset Folder + Hexo的img语法稳一点，类似</p>
-<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&#123;% asset_img xxx.png %&#125;</span><br></pre></td></tr></table></figure>
-<p>需要配置_config.yml 中的post_asset_folder为true，同时将png放到md的同名目录下。</p>
-
-      
-    </div>
-
-    
-    
-    
-
-    <footer class="post-footer">
-        <div class="post-eof"></div>
-      
-    </footer>
-  </article>
-</div>
 
 
 
