@@ -52,3 +52,6 @@ tags:
 
 # [latepost.com/](https://www.latepost.com/)
 这里主要是关注明星企业的行业故事了，包括新能源、互联网、大模型，增长见闻吧。
+
+# [BTFZ SDR](https://beautifulzzzz.com/gnuradio/tutorial/topic/1)
+关于SDR的一些教程，SDR本身是小众领域，在这个方向高质量的中文教程更加难得。
