@@ -10,6 +10,7 @@ menu:
   archives: /archives/ || fa fa-archive
   tags: /tags/ || fa fa-tags
   categories: /categories/ || fa fa-th
+  about: /about/ || fa fa-user
 
 # Sidebar Settings
 sidebar:
