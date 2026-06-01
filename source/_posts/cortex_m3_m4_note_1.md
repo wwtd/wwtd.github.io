@@ -4,6 +4,7 @@ date: 2026-05-23 15:00:00
 tags:
   - Arm Cortex-M
   - 读书记录
+  - 《ARM Cortex-M3 与 Cortex-M4 权威指南》
 
 ---
 # 前言
