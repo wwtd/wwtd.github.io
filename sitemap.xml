@@ -2,34 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
-    <loc>https://blog.gitk.site/2026/03/26/bookmark/</loc>
-    
-    <lastmod>2026-06-01</lastmod>
-    
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/</loc>
-    
-    <lastmod>2026-06-01</lastmod>
-    
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://blog.gitk.site/2026/03/24/workflow/</loc>
-    
-    <lastmod>2026-06-01</lastmod>
-    
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.gitk.site/googled62b775b3ac7180d.html</loc>
     
     <lastmod>2026-06-01</lastmod>
     
@@ -65,6 +38,24 @@
   </url>
   
   <url>
+    <loc>https://blog.gitk.site/2026/03/26/bookmark/</loc>
+    
+    <lastmod>2026-06-01</lastmod>
+    
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/</loc>
+    
+    <lastmod>2026-06-01</lastmod>
+    
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
     <loc>https://blog.gitk.site/2026/04/19/aapcs-guide/</loc>
     
     <lastmod>2026-06-01</lastmod>
@@ -83,6 +74,13 @@
 
   
   <url>
+    <loc>https://blog.gitk.site/tags/bookmark/</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.2</priority>
+  </url>
+  
+  <url>
     <loc>https://blog.gitk.site/tags/AAPCS/</loc>
     <lastmod>2026-06-01</lastmod>
     <changefreq>weekly</changefreq>
@@ -97,7 +95,7 @@
   </url>
   
   <url>
-    <loc>https://blog.gitk.site/tags/bookmark/</loc>
+    <loc>https://blog.gitk.site/tags/hexo/</loc>
     <lastmod>2026-06-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.2</priority>
@@ -112,13 +110,6 @@
   
   <url>
     <loc>https://blog.gitk.site/tags/%E3%80%8AARM-Cortex-M3-%E4%B8%8E-Cortex-M4-%E6%9D%83%E5%A8%81%E6%8C%87%E5%8D%97%E3%80%8B/</loc>
-    <lastmod>2026-06-01</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.2</priority>
-  </url>
-  
-  <url>
-    <loc>https://blog.gitk.site/tags/hexo/</loc>
     <lastmod>2026-06-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.2</priority>
