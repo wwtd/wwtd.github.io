@@ -3967,10 +3967,6 @@ int main(void) {
 而开了O1优化之后，对于没有volatile修饰的变量，编译器对变量的访问就会做简化，它会直接从寄存器那数值而不是ldr → str → ldr。
 # LDREX/STREX 原子操作
 ``` c
-/*
- * 观察目标: LDREX / STREX 原子操作
- *
- * 编译: make 20-atomic.elf
  * 反汇编: arm-none-eabi-objdump -d 20-atomic.elf
  *
  * 关注点:
@@ -3982,18 +3978,18 @@ int main(void) {
  */
 
 static int atomic_inc(volatile int *p) {
-    int old, new, failed;
+    int new_val, failed;
     do {
-        old = *p;
-        new = old + 1;
         __asm__ __volatile__(
-            "strex %0, %2, [%3]\n\t"
-            : "=&r"(failed), "=m"(*p)
-            : "r"(new), "r"(p)
-            : "memory"
+            "ldrex %0, [%2]\n\t"
+            "adds  %0, %0, #1\n\t"
+            "strex %1, %0, [%2]\n\t"
+            : "=&r"(new_val), "=&r"(failed)
+            : "r"(p)
+            : "memory", "cc"
         );
     } while (failed);
-    return new;
+    return new_val;
 }
 
 static int normal_inc(volatile int *p) {
@@ -4035,7 +4031,129 @@ int main(void) {
 }
 ```
 ##  normal_inc VS atomic_inc
+``` asm
+00000090 <atomic_inc>:
+  90:   b480            push    {r7}
+  92:   b085            sub     sp, #20
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6879            ldr     r1, [r7, #4]
+  9a:   e851 2f00       ldrex   r2, [r1]
+  9e:   3201            adds    r2, #1
+  a0:   e841 2300       strex   r3, r2, [r1]
+  a4:   60fa            str     r2, [r7, #12]
+  a6:   60bb            str     r3, [r7, #8]
+  a8:   68bb            ldr     r3, [r7, #8]
+  aa:   2b00            cmp     r3, #0
+  ac:   d1f4            bne.n   98 <atomic_inc+0x8>
+  ae:   68fb            ldr     r3, [r7, #12]
+  b0:   4618            mov     r0, r3
+  b2:   3714            adds    r7, #20
+  b4:   46bd            mov     sp, r7
+  b6:   bc80            pop     {r7}
+  b8:   4770            bx      lr
+
+000000ba <normal_inc>:
+  ba:   b480            push    {r7}
+  bc:   b083            sub     sp, #12
+  be:   af00            add     r7, sp, #0
+  c0:   6078            str     r0, [r7, #4]
+  c2:   687b            ldr     r3, [r7, #4]
+  c4:   681b            ldr     r3, [r3, #0]
+  c6:   3301            adds    r3, #1
+  c8:   687a            ldr     r2, [r7, #4]
+  ca:   6013            str     r3, [r2, #0]
+  cc:   4618            mov     r0, r3
+  ce:   370c            adds    r7, #12
+  d0:   46bd            mov     sp, r7
+  d2:   bc80            pop     {r7}
+  d4:   4770            bx      lr
+```
+只看核心逻辑的话，normal_inc本质是
+``` asm
+  cc:   681b            ldr     r3, [r3, #0]
+  ce:   3301            adds    r3, #1
+  d2:   6013            str     r3, [r2, #0]
+```
+读数据->递增->写回。
+而atomic_inc 的差异就会是
+``` asm
+  9a:   ldrex   r2, [r1]          ; 独占加载
+  9e:   adds    r2, #1
+  a0:   strex   r3, r2, [r1]      ; 独占写入
+  a8:   cmp     r3, #0
+  ac:   bne.n   98                 ; 失败重试
+```
+流程也是读数据->递增->写回，但是写回的操作，由str换成了strex。而strex会一个排他的写入指令，这样如果在写入过程中出现了中断被修改的话，strex会抛出错误码，这样通过对错误码的比较加入retry loop，可以确保写入的原子性。但是代价就是多了一个循环控制，如果在竞争激烈的时候这个循环是可能多次触发的。
 
 ## 独占监视器
+LDREX和STREX是配对出现的，它们依赖CPU内部的独占监视器（Exclusive Monitor）来工作：
+```
+LDREX Rt, [Rn]     ← 加载 Rt = *Rn, 同时标记 Rn 地址为"独占访问"
+STREX Rd, Rt, [Rn] ← 尝试写 *Rn = Rt
+                     ├── 独占监视器判定: 自 LDREX 以来有人写过这个地址吗？
+                     │   ├── 没有 → 写入成功, Rd = 0
+                     │   └── 有 → 写入失败, Rd = 1, *Rn 不变
+                     └── 结果在 Rd 里
+```
+在单核Cortex-M上"有人写过"的唯一可能就是中断。中断处理程序里要是碰了同一个变量，STREX就会返回1，然后外层的while (failed) 循环重试，直到没有中断冲突。
+注意：LDREX和STREX必须成对使用，中间间隔越小越好。如果在LDREX之后、STREX之前发生了异常或上下文切换，独占监视器可能会被清除，导致STREX失败——这恰恰是它保证原子性的方式。
 
-## spin_lock
+## spin_lock & spin_unlock
+``` asm
+000000de <spin_lock>:
+  de:   b480            push    {r7}
+  e0:   b085            sub     sp, #20
+  e2:   af00            add     r7, sp, #0
+  e4:   6078            str     r0, [r7, #4]
+  e6:   687a            ldr     r2, [r7, #4]
+  e8:   e852 3f00       ldrex   r3, [r2]
+  ec:   60fb            str     r3, [r7, #12]
+  ee:   68fb            ldr     r3, [r7, #12]
+  f0:   2b00            cmp     r3, #0
+  f2:   d1f8            bne.n   e6 <spin_lock+0x8>
+  f4:   2101            movs    r1, #1
+  f6:   687a            ldr     r2, [r7, #4]
+  f8:   e842 1300       strex   r3, r1, [r2]
+  fc:   60fb            str     r3, [r7, #12]
+  fe:   68fb            ldr     r3, [r7, #12]
+ 100:   4618            mov     r0, r3
+ 102:   3714            adds    r7, #20
+ 104:   46bd            mov     sp, r7
+ 106:   bc80            pop     {r7}
+ 108:   4770            bx      lr
+
+0000010a <spin_unlock>:
+ 10a:   b480            push    {r7}
+ 10c:   b083            sub     sp, #12
+ 10e:   af00            add     r7, sp, #0
+ 110:   6078            str     r0, [r7, #4]
+ 112:   687b            ldr     r3, [r7, #4]
+ 114:   2200            movs    r2, #0
+ 116:   601a            str     r2, [r3, #0]
+ 118:   bf00            nop
+ 11a:   370c            adds    r7, #12
+ 11c:   46bd            mov     sp, r7
+ 11e:   bc80            pop     {r7}
+ 120:   4770            bx      lr
+```
+完整走一遍spin_lock的逻辑：
+```
+1. LDREX r3, [lock]    读 lock, 设置独占标记
+   CMP  r3, #0          是 0 吗?
+   BNE  1              不是 0 → 锁被别人占着, 回头再读
+
+2. MOVS r1, #1          r1 = 1 (要写入的值)
+   STREX r3, r1, [lock]  尝试写入: *lock = 1
+                         返回 r3 = 0 (成功) 或 1 (失败)
+
+3. 返回 r3               caller 检查返回值
+```
+而 spin_unlock 就简单得多——只是str r2, [r3, #0]，一条普通STR把锁清零。不需要 LDREX/STREX，因为"写 0"这个操作不会被其他核误解（其他核正在 LDREX 等待，你这里str写0会被它们的独占监视器检测到，触发STREX失败然后重试）。
+完整的加锁解锁周期：
+```
+        LDREX → lock == 0? → STREX(1) → 成功 → [临界区] → STR(0)
+           ↑                      ↓
+           └──── 等待 ──── BNE ← 失败
+```
+值得注意的是spin_lock的返回值——严格来说，spin_lock在STREX成功后就立即返回了0（r3 = 0），但它没有检查返回值！这是一个小瑕疵——如果 STREX 在写入锁值之后又被其它事情打断，锁实际上没有被获取，但它返回了0。在严格的生产代码里，spin_lock的LDREX→CMP→STREX应该也包在一个循环里，确保获取锁后再检查一次。但在这个裸机单中断的简化场景下，它已经够用了。
