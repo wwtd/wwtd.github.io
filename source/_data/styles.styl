@@ -1,0 +1,63 @@
+// 现代简洁风格微调 —— NexT custom styles
+
+// 全局字体
+
+$font-family-base = "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+
+// 文章标题
+.posts-expand .post-title {
+  font-weight: 700;
+}
+
+// 主色调:现代蓝
+$blue = #409eff;
+
+// 圆角与阴影
+$card-radius = 12px;
+
+// 文章卡片(Gemini scheme)
+.post-block {
+  border-radius: $card-radius;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+
+  &:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+  }
+}
+
+// 侧栏
+.sidebar {
+  border-radius: $card-radius;
+}
+
+// 顶部菜单栏毛玻璃效果
+.site-nav {
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.85) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  .site-nav {
+    background: rgba(40, 40, 45, 0.85) !important;
+  }
+}
+
+// 链接样式
+a {
+  transition: color 0.2s ease;
+}
+
+// 代码块圆角
+.highlight, pre {
+  border-radius: 8px;
+}
+
+// 引用块现代样式
+blockquote {
+  border-left: 4px solid $blue;
+  background: rgba(64, 158, 255, 0.05);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 16px;
+}

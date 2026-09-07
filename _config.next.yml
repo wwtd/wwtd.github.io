@@ -2,7 +2,12 @@
 # Docs: https://theme-next.js.org/docs/
 
 # Scheme Settings
+# Gemini: 卡片式三栏 | Muse: 单栏极简 | Pisces: 双栏
 scheme: Gemini
+
+# Dark Mode
+darkmode:
+  enable: true
 
 # Menu Settings
 menu:
@@ -12,17 +17,55 @@ menu:
   categories: /categories/ || fa fa-th
   about: /about/ || fa fa-user
 
+menu_settings:
+  icons: true
+  badges: true
+
 # Sidebar Settings
 sidebar:
   position: left
   display: post
 
-# Post Settings
+# Sidebar Avatar
+avatar:
+  url: /images/avatar.png
+  rounded: true
+  rotated: false
+
+# Social Links
+social:
+  GitHub: https://github.com/wwtd || fab fa-github
+  E-Mail: mailto:chentengfei1998@gmail.com || fa fa-envelope
+social_icons:
+  enable: true
+  icons_only: true
+  transition: true
+
+# Table of Contents in the Sidebar
+toc:
+  enable: true
+  number: false
+  wrap: true
+
+# 首页摘要(hexo-excerpt):截取前 2 个元素 + 阅读更多按钮
+excerpt:
+  depth: 2
+excerpt_description: true
+read_more_btn: true
+
 post_meta:
   item_text: true
   created_at: true
-  updated_at: true
+  updated_at:
+    enable: true
+    another_day: false
   categories: true
+
+# Creative Commons license on posts
+creative_commons:
+  license: by-nc-sa
+  size: small
+  post: true
 
 # Code Highlight
 codeblock:
@@ -32,11 +75,62 @@ codeblock:
   copy_button:
     enable: true
     show_result: true
+    style: mac
+  fold:
+    enable: true
+    height: 500
+  language: true
+
+# Reading Progress Bar
+reading_progress:
+  enable: true
+  start_at: left
+  position: top
+
+# Back to Top
+back2top:
+  enable: true
+  sidebar: false
+  scrollpercent: true
+
+# Image Zoom (mediumzoom is lighter than fancybox)
+mediumzoom: true
+
+# Page Transition Animation
+motion:
+  enable: true
+  async: false
+
+# Pjax: 无刷新跳转,体感更快
+pjax: true
 
 # Local Search
 local_search:
   enable: true
+  top_n_per_article: 3
+  preload: false
 
 # Footer Settings
 footer:
   since: 2025
+  icon:
+    name: fa fa-heart
+    animated: true
+    color: "#ff0000"
+  powered: false
+  beian:
+    enable: false
+
+# Visit Statistics (busuanzi, 无需注册)
+busuanzi_count:
+  enable: true
+  total_visitors: true
+  total_visitors_icon: fa fa-user
+  total_views: true
+  total_views_icon: fa fa-eye
+  post_views: false
+
+# Custom style overrides (现代简洁微调)
+custom_file_path:
+  style: source/_data/styles.styl
+
