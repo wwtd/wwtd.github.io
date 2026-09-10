@@ -70,7 +70,7 @@ cat debug.gdb
 #   在 GDB 内: file 09-call-basics.elf
 target remote :1234
 ```
-```bash
+```ld
 #linker.ld
 ENTRY(Reset_Handler)
 
@@ -1385,7 +1385,7 @@ a0:   ldr.w  pc, [r2, r3, lsl #2]  ; pc =  *(r2 + cmd * 4)
 在缺失default的情景下，编译器没有选择适用跳转表而是用了cmp，这与编译器内部的判断逻辑有关。
 无default的分支——编译器会补充隐式default路径，当所有case都不匹配时跳转到返回-1的位置。
 # 循环
-``` asm
+``` c
 /*
  * 观察目标: for / while / do-while 的循环结构
  *
@@ -1577,7 +1577,7 @@ int main(void) {
 其实总的来看，循环逻辑生成的汇编代码是类似的，也比较易读，主要就是通过CMP+跳转来控制程序流。
 
 # break/continue/goto
-``` asm
+``` c
 /*
  * 观察目标: break / continue / goto 的跳转实现
  *
@@ -2507,7 +2507,7 @@ int main(void) {
   e4:   20000004        .word   0x20000004
 ```
 static变量在汇编层就是全局变量。不同于普通局部变量在栈上通过SP/R7偏移访问，们被分配在 .bss/.data 段，通过固定地址访问。
-``` asm
+``` bash
 $ arm-none-eabi-objdump -t 10b-static-local.elf | grep -E "count|sum"
 00000090 l     F .text  00000030 counter
 20000000 l       .bss   00000004 count.1

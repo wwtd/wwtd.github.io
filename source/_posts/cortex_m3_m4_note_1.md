@@ -447,7 +447,7 @@ file test-m3.elf
 target remote :1234
 info registers
 ```
-```text
+```gdb
 gdb-multiarch -q
 (gdb) file test-m3.elf
 Reading symbols from test-m3.elf...
