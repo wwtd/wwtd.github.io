@@ -18,17 +18,17 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css" integrity="sha256-VHqXKFhhMxcpubYf9xiWdCiojEbY9NexQ4jh8AxbvcM=" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.1.1/animate.min.css" integrity="sha256-PR7ttpcvz8qrF57fur/yAx1qXMFJeJFiA6pSzWi0OIE=" crossorigin="anonymous">
 
-<script class="next-config" data-name="main" type="application/json">{"hostname":"blog.gitk.site","root":"/","images":"/images","scheme":"Gemini","darkmode":true,"version":"8.27.0","exturl":false,"sidebar":{"position":"left","width_expanded":320,"width_dual_column":240,"display":"post","padding":18,"offset":12},"hljswrap":true,"codeblock":{"theme":{"light":"default","dark":"stackoverflow-dark"},"prism":{"light":"prism","dark":"prism-dark"},"copy_button":{"enable":true,"style":null,"show_result":true},"fold":{"enable":false,"height":500},"language":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"stickytabs":false,"motion":{"enable":true,"async":false,"duration":200,"transition":{"menu_item":"fadeInDown","post_block":"fadeIn","post_header":"fadeInDown","post_body":"fadeInDown","coll_header":"fadeInLeft","sidebar":"fadeInUp"}},"i18n":{"placeholder":"搜索...","empty":"没有找到任何搜索结果：${query}","hits_time":"找到 ${hits} 个搜索结果（用时 ${time} 毫秒）","hits":"找到 ${hits} 个搜索结果"},"path":"/search.json","localsearch":{"enable":true,"top_n_per_article":1,"unescape":false,"preload":false}}</script><script src="/js/config.js" defer></script>
+<script class="next-config" data-name="main" type="application/json">{"hostname":"blog.gitk.site","root":"/","images":"/images","scheme":"Gemini","darkmode":{"enable":true},"version":"8.27.0","exturl":false,"sidebar":{"position":"left","width_expanded":320,"width_dual_column":240,"display":"post","padding":18,"offset":12},"hljswrap":true,"codeblock":{"theme":{"light":"default","dark":"stackoverflow-dark"},"prism":{"light":"prism","dark":"prism-dark"},"copy_button":{"enable":true,"style":"mac","show_result":true},"fold":{"enable":true,"height":500},"language":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"mediumzoom":true,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"stickytabs":false,"motion":{"enable":true,"async":false,"duration":200,"transition":{"menu_item":"fadeInDown","post_block":"fadeIn","post_header":"fadeInDown","post_body":"fadeInDown","coll_header":"fadeInLeft","sidebar":"fadeInUp"}},"i18n":{"placeholder":"搜索...","empty":"没有找到任何搜索结果：${query}","hits_time":"找到 ${hits} 个搜索结果（用时 ${time} 毫秒）","hits":"找到 ${hits} 个搜索结果"},"path":"/search.json","localsearch":{"enable":true,"top_n_per_article":3,"unescape":false,"preload":false}}</script><script src="/js/config.js" defer></script>
 
-    <meta name="description" content="前言对于MCU也就是微控制器而言，Arm cortex M系列的MCU几乎是市场里的标杆和模范生了。为了更深入的理解cortex M3&#x2F;M4及这一类型的MCU，因此选择了《ARM Cortex-M3 与 Cortex-M4 权威指南》第三版，来做深入的学习。 这本书我在不同的渠道收到多次推荐，应该是业界非常有名的指导书了，希望能有满意的收获。 在学习的过程中，可能会借由实验来验证或者加深">
+    <meta name="description" content="前言对于MCU也就是微控制器而言，Arm cortex M系列的MCU几乎是市场里的标杆和模范生了。为了更深入的理解cortex M3&#x2F;M4及这一类型的MCU，因此选择了《ARM Cortex-M3 与 Cortex-M4 权威指南》第三版，来做深入的学习。">
 <meta property="og:type" content="article">
 <meta property="og:title" content="阅读 《ARM Cortex-M3 与 Cortex-M4 权威指南》 笔记 -- Part1">
 <meta property="og:url" content="https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/index.html">
 <meta property="og:site_name" content="WWTD&#39;s Blog">
-<meta property="og:description" content="前言对于MCU也就是微控制器而言，Arm cortex M系列的MCU几乎是市场里的标杆和模范生了。为了更深入的理解cortex M3&#x2F;M4及这一类型的MCU，因此选择了《ARM Cortex-M3 与 Cortex-M4 权威指南》第三版，来做深入的学习。 这本书我在不同的渠道收到多次推荐，应该是业界非常有名的指导书了，希望能有满意的收获。 在学习的过程中，可能会借由实验来验证或者加深">
+<meta property="og:description" content="前言对于MCU也就是微控制器而言，Arm cortex M系列的MCU几乎是市场里的标杆和模范生了。为了更深入的理解cortex M3&#x2F;M4及这一类型的MCU，因此选择了《ARM Cortex-M3 与 Cortex-M4 权威指南》第三版，来做深入的学习。">
 <meta property="og:locale" content="zh_CN">
 <meta property="article:published_time" content="2026-05-23T07:00:00.000Z">
-<meta property="article:modified_time" content="2026-06-01T13:27:13.107Z">
+<meta property="article:modified_time" content="2026-10-13T11:09:04.496Z">
 <meta property="article:author" content="wwtd">
 <meta property="article:tag" content="读书记录">
 <meta property="article:tag" content="Arm Cortex-M">
@@ -54,7 +54,9 @@
 
   
   <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js" integrity="sha256-XL2inqUJaslATFnHdJOi9GfQ60on8Wx1C2H8DYiN1xY=" crossorigin="anonymous" defer></script>
-<script src="/js/utils.js" defer></script><script src="/js/motion.js" defer></script><script src="/js/sidebar.js" defer></script><script src="/js/next-boot.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/next-theme-pjax/0.6.0/pjax.min.js" integrity="sha256-vxLn1tSKWD4dqbMRyv940UYw4sXgMtYcK6reefzZrao=" crossorigin="anonymous" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/medium-zoom/1.1.0/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous" defer></script>
+<script src="/js/utils.js" defer></script><script src="/js/motion.js" defer></script><script src="/js/sidebar.js" defer></script><script src="/js/next-boot.js" defer></script><script src="/js/pjax.js" defer></script>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/hexo-generator-searchdb/1.5.0/search.js" integrity="sha256-xFC6PJ82SL9b3WkGjFavNiA9gm5z6UBxWPiu4CYjptg=" crossorigin="anonymous" defer></script>
 <script src="/js/third-party/search/local-search.js" defer></script>
@@ -66,6 +68,7 @@
 
 
   
+  <script data-pjax async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
 
 
 
@@ -111,7 +114,7 @@
 
 
 <nav class="site-nav">
-  <ul class="main-menu menu"><li class="menu-item menu-item-home"><a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a></li><li class="menu-item menu-item-archives"><a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a></li><li class="menu-item menu-item-tags"><a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签</a></li><li class="menu-item menu-item-categories"><a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类</a></li><li class="menu-item menu-item-about"><a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a></li>
+  <ul class="main-menu menu"><li class="menu-item menu-item-home"><a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a></li><li class="menu-item menu-item-archives"><a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档<span class="badge">5</span></a></li><li class="menu-item menu-item-tags"><a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签<span class="badge">6</span></a></li><li class="menu-item menu-item-categories"><a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类<span class="badge">0</span></a></li><li class="menu-item menu-item-about"><a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a></li>
       <li class="menu-item menu-item-search">
         <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
         </a>
@@ -162,12 +165,14 @@
       <div class="sidebar-panel-container">
         <!--noindex-->
         <div class="post-toc-wrap sidebar-panel">
-            <div class="post-toc animated"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%89%8D%E8%A8%80"><span class="nav-number">1.</span> <span class="nav-text">前言</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%85%B3%E4%BA%8Ecortex-M3%E3%80%81M4"><span class="nav-number">1.1.</span> <span class="nav-text">关于cortex M3、M4</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA"><span class="nav-number">2.</span> <span class="nav-text">实验环境搭建</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#Makefile-%E7%9B%AE%E6%A0%87"><span class="nav-number">2.1.</span> <span class="nav-text">Makefile 目标</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#QEMU-%E6%9C%BA%E5%99%A8%E9%80%89%E5%9E%8B"><span class="nav-number">2.2.</span> <span class="nav-text">QEMU 机器选型</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C%E7%8E%AF%E5%A2%83%E9%AA%8C%E8%AF%81"><span class="nav-number">2.3.</span> <span class="nav-text">实验环境验证</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C1%EF%BC%9A%E4%BB%8E-Reset-%E5%88%B0-main%E2%80%94%E2%80%94Cortex-M3-%E5%90%AF%E5%8A%A8%E5%85%A8%E6%B5%81%E7%A8%8B%E8%B7%9F%E8%B8%AA"><span class="nav-number">3.</span> <span class="nav-text">实验1：从 Reset 到 main——Cortex-M3 启动全流程跟踪</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%AD%E6%96%AD%E5%90%91%E9%87%8F%E8%A1%A8%E4%B8%8EReset-Handler"><span class="nav-number">3.1.</span> <span class="nav-text">中断向量表与Reset_Handler</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%80%9A%E8%BF%87GDB%E8%A7%82%E5%AF%9F%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B"><span class="nav-number">3.2.</span> <span class="nav-text">通过GDB观察启动过程</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#To-Be-Continued"><span class="nav-number">4.</span> <span class="nav-text">To Be Continued</span></a></li></ol></div>
+            <div class="post-toc animated"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%89%8D%E8%A8%80"><span class="nav-text">前言</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%85%B3%E4%BA%8Ecortex-M3%E3%80%81M4"><span class="nav-text">关于cortex M3、M4</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C%E7%8E%AF%E5%A2%83%E6%90%AD%E5%BB%BA"><span class="nav-text">实验环境搭建</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#Makefile-%E7%9B%AE%E6%A0%87"><span class="nav-text">Makefile 目标</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#QEMU-%E6%9C%BA%E5%99%A8%E9%80%89%E5%9E%8B"><span class="nav-text">QEMU 机器选型</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C%E7%8E%AF%E5%A2%83%E9%AA%8C%E8%AF%81"><span class="nav-text">实验环境验证</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%AE%9E%E9%AA%8C1%EF%BC%9A%E4%BB%8E-Reset-%E5%88%B0-main%E2%80%94%E2%80%94Cortex-M3-%E5%90%AF%E5%8A%A8%E5%85%A8%E6%B5%81%E7%A8%8B%E8%B7%9F%E8%B8%AA"><span class="nav-text">实验1：从 Reset 到 main——Cortex-M3 启动全流程跟踪</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%AD%E6%96%AD%E5%90%91%E9%87%8F%E8%A1%A8%E4%B8%8EReset-Handler"><span class="nav-text">中断向量表与Reset_Handler</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%80%9A%E8%BF%87GDB%E8%A7%82%E5%AF%9F%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B"><span class="nav-text">通过GDB观察启动过程</span></a></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#To-Be-Continued"><span class="nav-text">To Be Continued</span></a></li></ol></div>
         </div>
         <!--/noindex-->
 
         <div class="site-overview-wrap sidebar-panel">
           <div class="site-author animated" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="wwtd"
+      src="/images/avatar.png">
   <p class="site-author-name" itemprop="name">wwtd</p>
   <div class="site-description" itemprop="description">description: 嵌入式开发、RTOS、Linux、MCU、NFC 与技术学习记录</div>
 </div>
@@ -175,7 +180,7 @@
   <nav class="site-state">
       <div class="site-state-item site-state-posts">
         <a href="/archives/">
-          <span class="site-state-item-count">4</span>
+          <span class="site-state-item-count">5</span>
           <span class="site-state-item-name">日志</span>
         </a>
       </div>
@@ -186,6 +191,14 @@
       </div>
   </nav>
 </div>
+  <div class="links-of-author animated">
+      <span class="links-of-author-item">
+        <a href="https://github.com/wwtd" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;wwtd" rel="noopener me" target="_blank"><i class="fab fa-github fa-fw"></i></a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="mailto:chentengfei1998@gmail.com" title="E-Mail → mailto:chentengfei1998@gmail.com" rel="noopener me" target="_blank"><i class="fa fa-envelope fa-fw"></i></a>
+      </span>
+  </div>
 
         </div>
       </div>
@@ -211,7 +224,7 @@
     <link itemprop="mainEntityOfPage" href="https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
-      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="image" content="/images/avatar.png">
       <meta itemprop="name" content="wwtd">
     </span>
 
@@ -238,6 +251,13 @@
       <span class="post-meta-item-text">发表于</span>
 
       <time title="创建时间：2026-05-23 15:00:00" itemprop="dateCreated datePublished" datetime="2026-05-23T15:00:00+08:00">2026-05-23</time>
+    </span>
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar-check"></i>
+      </span>
+      <span class="post-meta-item-text">更新于</span>
+      <time title="修改时间：2026-10-13 19:09:04" itemprop="dateModified" datetime="2026-10-13T19:09:04+08:00">2026-10-13</time>
     </span>
 
   
@@ -415,7 +435,7 @@
 <figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">gdb-multiarch -q</span><br></pre></td></tr></table></figure>
 <p>然后在弹出来的gdb交互式窗口分别执行：</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">file test-m3.elf</span><br><span class="line">target remote :1234</span><br><span class="line">info registers</span><br></pre></td></tr></table></figure>
-<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">gdb-multiarch -q</span><br><span class="line">(gdb) file test-m3.elf</span><br><span class="line">Reading symbols from test-m3.elf...</span><br><span class="line">(gdb) target remote :1234</span><br><span class="line">Remote debugging using :1234</span><br><span class="line">Reset_Handler () at startup.c:8</span><br><span class="line">8           src = &amp;_sidata;</span><br><span class="line">(gdb) info registers</span><br><span class="line">r0             0x0                 0</span><br><span class="line">r1             0x0                 0</span><br><span class="line">r2             0x0                 0</span><br><span class="line">r3             0x0                 0</span><br><span class="line">r4             0x0                 0</span><br><span class="line">r5             0x0                 0</span><br><span class="line">r6             0x0                 0</span><br><span class="line">r7             0x0                 0</span><br><span class="line">r8             0x0                 0</span><br><span class="line">r9             0x0                 0</span><br><span class="line">r10            0x0                 0</span><br><span class="line">r11            0x0                 0</span><br><span class="line">r12            0x0                 0</span><br><span class="line">sp             0x20010000          0x20010000</span><br><span class="line">lr             0xffffffff          -1</span><br><span class="line">pc             0x40                0x40 &lt;Reset_Handler&gt;</span><br><span class="line">xpsr           0x41000000          1090519040</span><br></pre></td></tr></table></figure>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">gdb-multiarch -q</span><br><span class="line">(gdb) file test-m3.elf</span><br><span class="line">Reading symbols from test-m3.elf...</span><br><span class="line">(gdb) target remote :1234</span><br><span class="line">Remote debugging using :1234</span><br><span class="line">Reset_Handler () at startup.c:8</span><br><span class="line">8           src = &amp;_sidata;</span><br><span class="line">(gdb) info registers</span><br><span class="line">r0             0x0                 0</span><br><span class="line">r1             0x0                 0</span><br><span class="line">r2             0x0                 0</span><br><span class="line">r3             0x0                 0</span><br><span class="line">r4             0x0                 0</span><br><span class="line">r5             0x0                 0</span><br><span class="line">r6             0x0                 0</span><br><span class="line">r7             0x0                 0</span><br><span class="line">r8             0x0                 0</span><br><span class="line">r9             0x0                 0</span><br><span class="line">r10            0x0                 0</span><br><span class="line">r11            0x0                 0</span><br><span class="line">r12            0x0                 0</span><br><span class="line">sp             0x20010000          0x20010000</span><br><span class="line">lr             0xffffffff          -1</span><br><span class="line">pc             0x40                0x40 &lt;Reset_Handler&gt;</span><br><span class="line">xpsr           0x41000000          1090519040</span><br></pre></td></tr></table></figure>
 <p>这里其实就能看到，PC在0x40表示Reset_Handler。SP在0x20010000，是我们设置的初始栈指针。LR指向0xffffffff，表示在Thread模式使用MSP。XPSR在0x41000000，其bit24为1表示运行在Thumb模式。<br>接下来，可以用内存dump工具来看向量表在内存的布局。</p>
 <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">(gdb) x/16xw 0x00000000</span><br><span class="line">0x0 &lt;vector_table&gt;:     0x20010000      0x00000041      0x00000089      0x00000089</span><br><span class="line">0x10 &lt;vector_table+16&gt;: 0x00000089      0x00000089      0x00000089      0x00000000</span><br><span class="line">0x20 &lt;vector_table+32&gt;: 0x00000000      0x00000000      0x00000000      0x00000089</span><br><span class="line">0x30 &lt;vector_table+48&gt;: 0x00000089      0x00000000      0x00000089      0x00000089</span><br></pre></td></tr></table></figure>
 <p>和objdump的是完全一致的。</p>
@@ -436,6 +456,23 @@ reset 芯片，然后给程序的关键地址打上断点，重新观察流程<f
     
 
     <footer class="post-footer">
+          
+
+<div class="post-copyright">
+<ul>
+  <li class="post-copyright-author">
+      <strong>本文作者： </strong>wwtd
+  </li>
+  <li class="post-copyright-link">
+      <strong>本文链接：</strong>
+      <a href="https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/" title="阅读 《ARM Cortex-M3 与 Cortex-M4 权威指南》 笔记 -- Part1">https://blog.gitk.site/2026/05/23/cortex_m3_m4_note_1/</a>
+  </li>
+  <li class="post-copyright-license">
+      <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
           <div class="post-tags">
               <a href="/tags/%E8%AF%BB%E4%B9%A6%E8%AE%B0%E5%BD%95/" rel="tag"># 读书记录</a>
               <a href="/tags/Arm-Cortex-M/" rel="tag"># Arm Cortex-M</a>
@@ -451,6 +488,9 @@ reset 芯片，然后给程序的关键地址打上断点，重新观察流程<f
                 </a>
             </div>
             <div class="post-nav-item">
+                <a href="/2026/05/27/cortex_m3_m4_note_2/" rel="next" title="从C语言到汇编指令">
+                  从C语言到汇编指令 <i class="fa fa-angle-right"></i>
+                </a>
             </div>
           </div>
     </footer>
@@ -476,8 +516,24 @@ reset 芯片，然后给程序的关键地址打上断点，重新观察流程<f
     </span>
     <span class="author" itemprop="copyrightHolder">wwtd</span>
   </div>
-  <div class="powered-by">由 <a href="https://hexo.io/" rel="noopener" target="_blank">Hexo</a> & <a href="https://theme-next.js.org/" rel="noopener" target="_blank">NexT.Gemini</a> 强力驱动
-  </div>
+<div class="busuanzi-count">
+    <span class="post-meta-item" id="busuanzi_container_site_uv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-user"></i>
+      </span>
+      <span class="site-uv" title="总访客量">
+        <span id="busuanzi_value_site_uv"></span>
+      </span>
+    </span>
+    <span class="post-meta-item" id="busuanzi_container_site_pv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-eye"></i>
+      </span>
+      <span class="site-pv" title="总访问量">
+        <span id="busuanzi_value_site_pv"></span>
+      </span>
+    </span>
+</div>
 
     </div>
   </footer>
@@ -493,6 +549,7 @@ reset 芯片，然后给程序的关键地址打上断点，重新观察流程<f
     <i class="fa fa-arrow-up fa-lg"></i>
     <span>0%</span>
   </div>
+  <div class="reading-progress-bar"></div>
 
 <noscript>
   <div class="noscript-warning">Theme NexT works best with JavaScript enabled</div>
