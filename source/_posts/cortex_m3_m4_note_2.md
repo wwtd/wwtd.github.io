@@ -4157,3 +4157,2638 @@ STREX Rd, Rt, [Rn] ← 尝试写 *Rn = Rt
            └──── 等待 ──── BNE ← 失败
 ```
 值得注意的是spin_lock的返回值——严格来说，spin_lock在STREX成功后就立即返回了0（r3 = 0），但它没有检查返回值！这是一个小瑕疵——如果 STREX 在写入锁值之后又被其它事情打断，锁实际上没有被获取，但它返回了0。在严格的生产代码里，spin_lock的LDREX→CMP→STREX应该也包在一个循环里，确保获取锁后再检查一次。但在这个裸机单中断的简化场景下，它已经够用了。
+
+# SysTick 中断与并发
+
+到这里为止的实验都还只有一条控制流。但真实 MCU 程序里最重要的东西是中断——它会在任意两条指令之间插进来一段别人的代码，而这段代码和你正在跑的函数共享同一片内存。这一节用 SysTick 做一次“中断改全局变量”的演示，它也是后面异常/中断章节的预热。
+
+``` c
+/*
+ * 观察目标: 中断共享变量与 volatile 的必要性
+ *
+ * 编译: make 21-concurrency.elf
+ * GDB:  make qemu-gdb-21-concurrency
+ *   终端2: gdb-multiarch -q -ex "target remote :1234" 21-concurrency.elf
+ *
+ * 关注点:
+ *   1. SysTick 中断每 N 个 CPU 周期递增全局变量 tick
+ *   2. GDB 可观察 tick 在中断中被修改、main 循环中读取
+ *   3. main 循环中 volatile 强制每次迭代重新 LDR
+ *   4. 中断修改 main 使用的变量 → 典型的并发问题土壤
+ *   5. QEMU 下 SysTick 频率有限, 纯运行时退出可能较慢;
+ *      用 GDB 设断点观察即可, 也可用 -icount 加速
+ *
+ * 这是后续异常/中断章节的预热。
+ */
+
+#include <stdint.h>
+
+volatile uint32_t systick_count;
+
+void SysTick_Handler(void) {
+    systick_count++;
+}
+
+static void systick_init(void) {
+    /* SysTick: processor clock, 使能 + 中断 */
+    *((volatile uint32_t *)0xE000E014) = 1000 - 1;  /* STK_LOAD */
+    *((volatile uint32_t *)0xE000E018) = 0;          /* STK_VAL */
+    *((volatile uint32_t *)0xE000E010) = 7;          /* STK_CTRL: enable + tickint + clksrc */
+}
+
+int main(void) {
+    systick_init();
+
+    while (1) {
+        if (systick_count > 1000)
+            break;
+    }
+
+    return 0;
+}
+```
+
+## 中断处理程序
+
+``` asm
+00000090 <SysTick_Handler>:
+  90:   b480            push    {r7}
+  92:   af00            add     r7, sp, #0
+  94:   4b04            ldr     r3, [pc, #16]   @ (a8 <SysTick_Handler+0x18>)
+  96:   681b            ldr     r3, [r3, #0]
+  98:   3301            adds    r3, #1
+  9a:   4a03            ldr     r2, [pc, #12]   @ (a8 <SysTick_Handler+0x18>)
+  9c:   6013            str     r3, [r2, #0]
+  9e:   bf00            nop
+  a0:   46bd            mov     sp, r7
+  a2:   bc80            pop     {r7}
+  a4:   4770            bx      lr
+  a6:   bf00            nop
+  a8:   20000000        .word   0x20000000
+
+000000ac <systick_init>:
+  ac:   b480            push    {r7}
+  ae:   af00            add     r7, sp, #0
+  b0:   4b06            ldr     r3, [pc, #24]   @ (cc <systick_init+0x20>)
+  b2:   f240 32e7       movw    r2, #999        @ 0x3e7
+  b6:   601a            str     r2, [r3, #0]
+  b8:   4b05            ldr     r3, [pc, #20]   @ (d0 <systick_init+0x24>)
+  ba:   2200            movs    r2, #0
+  bc:   601a            str     r2, [r3, #0]
+  be:   4b05            ldr     r3, [pc, #20]   @ (d4 <systick_init+0x28>)
+  c0:   2207            movs    r2, #7
+  c2:   601a            str     r2, [r3, #0]
+  c4:   bf00            nop
+  c6:   46bd            mov     sp, r7
+  c8:   bc80            pop     {r7}
+  ca:   4770            bx      lr
+  cc:   e000e014        .word   0xe000e014
+  d0:   e000e018        .word   0xe000e018
+  d4:   e000e010        .word   0xe000e010
+```
+
+SysTick_Handler 干的事很朴素：`ldr r3, [pc, #16]` 从字面量池取出 systick_count 的地址（0x20000000，在 .bss 里），`ldr` 读出来，`adds r3, #1`，再 `str` 写回去。这就是 `systick_count++` 最直白的翻译。
+
+有两点值得留意。一是整个处理程序里没有 `push {lr}`——因为它不调用任何函数，是个“叶子”，全程不会踩到 lr，所以返回时直接 `bx lr` 就回到被中断的地方。二是它头顶照样挂着 `push {r7}` / `add r7, sp, #0` 这套帧指针序言：这是 GCC 在 -O0 下一视同仁的产物，并不因为它是中断就特殊对待。
+
+systick_init 则是往 SysTick 的三个寄存器写值：`movw r2, #999` 写进 0xE000E014（STK_LOAD，重装载值 1000-1，即每 1000 个时钟打一次中断），清 0xE000E018（STK_VAL），最后把 7 写进 0xE000E010（STK_CTRL：使能 + 开中断 + 处理器时钟）。这三个都是外设寄存器地址，在汇编里就是三个 .word 常量。
+
+## 主循环轮询
+
+``` asm
+000000d8 <main>:
+  d8:   b580            push    {r7, lr}
+  da:   af00            add     r7, sp, #0
+  dc:   f7ff ffe6       bl      ac <systick_init>
+  e0:   4b04            ldr     r3, [pc, #16]   @ (f4 <main+0x1c>)
+  e2:   681b            ldr     r3, [r3, #0]
+  e4:   f5b3 7f7a       cmp.w   r3, #1000       @ 0x3e8
+  e8:   d800            bhi.n   ec <main+0x14>
+  ea:   e7f9            b.n     e0 <main+0x8>
+  ec:   bf00            nop
+  ee:   2300            movs    r3, #0
+  f0:   4618            mov     r0, r3
+  f2:   bd80            pop     {r7, pc}
+  f4:   20000000        .word   0x20000000
+```
+
+main 里的 `while (1) { if (systick_count > 1000) break; }` 编译出来是：先把 systick_count 读进 r3，`cmp.w r3, #1000`，再 `bhi`（高于则跳走）。两个细节：
+
+- **每圈都重新 LDR**：因为 systick_count 是 volatile，编译器不能把它缓存在寄存器里，循环每转一圈都会真的去内存读一次。如果它不是 volatile，优化一开，这个循环就会被编成“只读一次然后死循环”——这正是上一节 volatile 的直接后果。
+- **`bhi` 是无符号比较**：systick_count 是 uint32_t，`> 1000` 走的是无符号条件码（bhi 一族），而不是有符号的 bgt。
+
+## 动态观察
+
+光看汇编还不够——这个实验的意义在于“中断真的插进来了”。在 GDB 里把断点设在 SysTick_Handler 上，先放行 4 次：
+
+``` bash
+(gdb) break SysTick_Handler
+(gdb) ignore 1 4
+(gdb) continue
+Breakpoint 1, SysTick_Handler () at 21-concurrency.c:24
+24        systick_count++;
+$1 = 4
+(gdb) bt
+#0  SysTick_Handler () at 21-concurrency.c:24
+#1  <signal handler called>
+#2  0x000000e2 in main () at 21-concurrency.c:38
+(gdb) info registers pc lr
+pc             0x94                0x94 <SysTick_Handler+4>
+lr             0xfffffff9          -7
+```
+
+停在第 5 次进入中断的时刻，此时 systick_count 已经是 4。更值得看的是 backtrace 里那一层 `<signal handler called>`——处理器没有“调用者压入的返回地址”这回事，GDB 只能诚实地告诉你“下面这段不是普通函数调用”。再看 lr：`0xfffffff9`。
+
+0xFFFFFFF9 是 EXC_RETURN。中断的返回不靠压栈的地址，而靠 lr 里这个魔法值：它告诉 CPU“返回到线程模式、用 MSP、栈帧是基本帧”。这也是为什么中断处理程序里绝不能随手改 lr。
+
+一路跑到底，main 的循环会在 systick_count 第一次超过 1000 时退出：
+
+``` bash
+Breakpoint 2, main () at 21-concurrency.c:39
+39                break;
+$2 = 1001
+(gdb) x/1xw 0x20000000
+0x20000000 <systick_count>:    0x000003e9
+```
+
+1001 = 0x3e9，和直接读内存的结果一致——中断确实在 main 背后偷偷把这块内存加了一千次。
+
+# 可重入与不可重入
+
+“可重入”这个词听起来玄，其实判据只有一条：**函数运行期间，它的状态放在哪里？**放在全局/static（.data/.bss）里就不可重入，因为下一次进入会覆盖上一次的状态；全部放在参数和栈上就可重入。落到汇编层面，就是“访问固定地址”和“访问 SP 相对地址”的区别。
+
+``` c
+/*
+ * 观察目标: 不可重入函数的成因
+ *
+ * 编译: make 22-reentrancy.elf
+ * 反汇编: arm-none-eabi-objdump -d 22-reentrancy.elf
+ *
+ * 关注点:
+ *   1. 函数依赖全局/静态变量 → 第一次调用未完成时第二次调用破坏状态
+ *   2. 可重入版本只使用栈 (参数 + 局部变量), 天然安全
+ *   3. 反汇编中: 不可重入函数访问 .data/.bss (LDR from global addr)
+ *                可重入函数只操作 SP 相关地址 (LDR from SP offset)
+ */
+
+static int seed = 1;
+
+/* 不可重入: 依赖全局变量 seed */
+static int rand_int(void) {
+    seed = seed * 1103515245 + 12345;
+    return (seed >> 16) & 0x7FFF;
+}
+
+/* 可重入: 依赖调用者传入的状态 */
+static int rand_int_r(int *state) {
+    *state = *state * 1103515245 + 12345;
+    return (*state >> 16) & 0x7FFF;
+}
+
+/* 不可重入: 内部 static 缓冲区 */
+static char *itoa_bad(int n) {
+    static char buf[12];
+    int i = 0;
+    if (n < 0) { n = -n; }
+    do { buf[i++] = '0' + (n % 10); } while ((n /= 10) > 0);
+    buf[i] = '\0';
+    return buf;
+}
+
+int main(void) {
+    volatile int r1, r2;
+    volatile char *s;
+    int state = 1234;
+
+    r1 = rand_int();
+    r1 = rand_int();
+
+    r2 = rand_int_r(&state);
+    r2 = rand_int_r(&state);
+
+    s = itoa_bad(42);
+    return r1 + r2;
+}
+```
+
+## 依赖全局状态的版本
+
+``` asm
+00000090 <rand_int>:
+  90:   b480            push    {r7}
+  92:   af00            add     r7, sp, #0
+  94:   4b09            ldr     r3, [pc, #36]   @ (bc <rand_int+0x2c>)
+  96:   681b            ldr     r3, [r3, #0]
+  98:   4a09            ldr     r2, [pc, #36]   @ (c0 <rand_int+0x30>)
+  9a:   fb02 f303       mul.w   r3, r2, r3
+  9e:   f503 5340       add.w   r3, r3, #12288  @ 0x3000
+  a2:   3339            adds    r3, #57 @ 0x39
+  a4:   4a05            ldr     r2, [pc, #20]   @ (bc <rand_int+0x2c>)
+  a6:   6013            str     r3, [r2, #0]
+  a8:   4b04            ldr     r3, [pc, #16]   @ (bc <rand_int+0x2c>)
+  aa:   681b            ldr     r3, [r3, #0]
+  ac:   141b            asrs    r3, r3, #16
+  ae:   f3c3 030e       ubfx    r3, r3, #0, #15
+  b2:   4618            mov     r0, r3
+  b4:   46bd            mov     sp, r7
+  b6:   bc80            pop     {r7}
+  b8:   4770            bx      lr
+  ba:   bf00            nop
+  bc:   20000000        .word   0x20000000
+  c0:   41c64e6d        .word   0x41c64e6d
+```
+
+rand_int 是一个标准的 LCG。它把状态 seed 存在文件级 static 变量里，汇编上表现为：`ldr r3, [r3, #0]`（r3 来自字面量池里的 0x20000000，即 seed 的地址），`mul.w r3, r2, r3`（乘以 1103515245 = 0x41c64e6d），`add.w ... #0x3000` 加 `adds #57`（合起来 +12345），`str` 写回，最后重新 `ldr` 读出来做移位、取低 15 位。
+
+关键在于那个 0x20000000——它是 .data 段里一个**固定地址**。不管谁、什么时候调用 rand_int，用的都是同一格内存。所以这个函数天生不可重入：如果第一次调用算到一半被打断，第二次进来会把 seed 改掉，第一次的后续计算就跟着错乱。
+
+## 把状态交给调用者
+
+``` asm
+000000c4 <rand_int_r>:
+  c4:   b480            push    {r7}
+  c6:   b083            sub     sp, #12
+  c8:   af00            add     r7, sp, #0
+  ca:   6078            str     r0, [r7, #4]
+  cc:   687b            ldr     r3, [r7, #4]
+  ce:   681b            ldr     r3, [r3, #0]
+  d0:   4a08            ldr     r2, [pc, #32]   @ (f4 <rand_int_r+0x30>)
+  d2:   fb02 f303       mul.w   r3, r2, r3
+  d6:   f503 5340       add.w   r3, r3, #12288  @ 0x3000
+  da:   3339            adds    r3, #57 @ 0x39
+  dc:   687a            ldr     r2, [r7, #4]
+  de:   6013            str     r3, [r2, #0]
+  e0:   687b            ldr     r3, [r7, #4]
+  e2:   681b            ldr     r3, [r3, #0]
+  e4:   141b            asrs    r3, r3, #16
+  e6:   f3c3 030e       ubfx    r3, r3, #0, #15
+  ea:   4618            mov     r0, r3
+  ec:   370c            adds    r7, #12
+  ee:   46bd            mov     sp, r7
+  f0:   bc80            pop     {r7}
+  f2:   4770            bx      lr
+  f4:   41c64e6d        .word   0x41c64e6d
+```
+
+rand_int_r 做的事一模一样，唯一的区别是状态从哪里来：它接收一个 `int *state`，全程只跟这个指针打交道。汇编里除了取参数、算乘法，所有访问都是 `[r7, #4]` 这种 SP 相对偏移——**没有任何一个固定的全局地址**。
+
+这就是可重入的版本：状态跟着调用走，每次调用各用各的，中断里再调它也不会互相干扰。
+
+## 内部 static 缓冲区
+
+``` asm
+000000f8 <itoa_bad>:
+  f8:   b480            push    {r7}
+  fa:   b085            sub     sp, #20
+  fc:   af00            add     r7, sp, #0
+  fe:   6078            str     r0, [r7, #4]
+ 100:   2300            movs    r3, #0
+ 102:   60fb            str     r3, [r7, #12]
+ 104:   687b            ldr     r3, [r7, #4]
+ 106:   2b00            cmp     r3, #0
+ 108:   da02            bge.n   110 <itoa_bad+0x18>
+ 10a:   687b            ldr     r3, [r7, #4]
+ 10c:   425b            negs    r3, r3
+ 10e:   607b            str     r3, [r7, #4]
+ 110:   687a            ldr     r2, [r7, #4]
+ 112:   4b14            ldr     r3, [pc, #80]   @ (164 <itoa_bad+0x6c>)
+ 114:   fb83 1302       smull   r1, r3, r3, r2
+ 118:   1099            asrs    r1, r3, #2
+ 11a:   17d3            asrs    r3, r2, #31
+ 11c:   1ac9            subs    r1, r1, r3
+ 11e:   460b            mov     r3, r1
+ 120:   009b            lsls    r3, r3, #2
+ 122:   440b            add     r3, r1
+ 124:   005b            lsls    r3, r3, #1
+ 126:   1ad1            subs    r1, r2, r3
+ 128:   b2ca            uxtb    r2, r1
+ 12a:   68fb            ldr     r3, [r7, #12]
+ 12c:   1c59            adds    r1, r3, #1
+ 12e:   60f9            str     r1, [r7, #12]
+ 130:   3230            adds    r2, #48 @ 0x30
+ 132:   b2d1            uxtb    r1, r2
+ 134:   4a0c            ldr     r2, [pc, #48]   @ (168 <itoa_bad+0x70>)
+ 136:   54d1            strb    r1, [r2, r3]
+ 138:   687b            ldr     r3, [r7, #4]
+ 13a:   4a0a            ldr     r2, [pc, #40]   @ (164 <itoa_bad+0x6c>)
+ 13c:   fb82 1203       smull   r1, r2, r2, r3
+ 140:   1092            asrs    r2, r2, #2
+ 142:   17db            asrs    r3, r3, #31
+ 144:   1ad3            subs    r3, r2, r3
+ 146:   607b            str     r3, [r7, #4]
+ 148:   687b            ldr     r3, [r7, #4]
+ 14a:   2b00            cmp     r3, #0
+ 14c:   dce0            bgt.n   110 <itoa_bad+0x18>
+ 14e:   4a06            ldr     r2, [pc, #24]   @ (168 <itoa_bad+0x70>)
+ 150:   68fb            ldr     r3, [r7, #12]
+ 152:   4413            add     r3, r2
+ 154:   2200            movs    r2, #0
+ 156:   701a            strb    r2, [r3, #0]
+ 158:   4b03            ldr     r3, [pc, #12]   @ (168 <itoa_bad+0x70>)
+ 15a:   4618            mov     r0, r3
+ 15c:   3714            adds    r7, #20
+ 15e:   46bd            mov     sp, r7
+ 160:   bc80            pop     {r7}
+ 162:   4770            bx      lr
+ 164:   66666667        .word   0x66666667
+ 168:   20000004        .word   0x20000004
+```
+
+itoa_bad 更隐蔽一点：它内部有个 `static char buf[12]`，最后 `return buf`。汇编里最后那句 `ldr r3, [pc, #12]` 取出来的 0x20000004 就是 buf 的固定地址，函数返回的就是它。
+
+这个函数的问题不在于重入时算错，而在于**返回的是一块所有人共享的内存**。两个调用者先后调用它，拿到的是同一个地址，第二个人的结果会把第一个人的覆盖掉。这类“返回内部 static 缓冲区”的接口，在并发或嵌套调用下几乎必然出问题。
+# 浮点：M3 软浮点 vs M4 硬 FPU
+
+这是全系列第一次把 M3 和 M4 摆在一起对比。M4 比 M3 多出来的最主要的东西就是 FPU（浮点单元），这一节就来看：同一段浮点 C 代码，两边编译出来差多少。
+
+``` c
+/*
+ * 观察目标: M3 软浮点 vs M4 硬件 FPU
+ *
+ * M3 编译: make 23-float.elf
+ * M4 编译: make CFLAGS="-mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16" 23-float.elf
+ *
+ * 反汇编对比:
+ *   arm-none-eabi-objdump -d 23-float.elf          (M3, 软浮点)
+ *   arm-none-eabi-objdump -d 23-float.elf | grep -E "vldr|vstr|vadd|vmul"  (M4, 硬浮点)
+ *
+ * 关注点:
+ *   1. M3: 浮点运算调用 __aeabi_fadd / __aeabi_fmul 等库函数
+ *   2. M4: VADD / VSUB / VMUL / VLDR / VSTR 等硬件指令
+ *   3. M4 硬浮点的 prologue 需要 VPUSH 保存浮点寄存器
+ */
+
+static float fadd(float a, float b)   { return a + b; }
+static float fsub(float a, float b)   { return a - b; }
+static float fmul(float a, float b)   { return a * b; }
+static float fdiv(float a, float b)   { return a / b; }
+
+static float fma(float a, float b, float c) {
+    return a * b + c;
+}
+
+int main(void) {
+    volatile float r;
+    r = fadd(1.5f, 2.5f);
+    r = fsub(10.0f, 3.0f);
+    r = fmul(2.0f, 3.0f);
+    r = fdiv(7.0f, 2.0f);
+    r = fma(2.0f, 3.0f, 1.0f);
+    return 0;
+}
+```
+
+两版都编出来：
+
+``` bash
+make 23-float.elf
+make CFLAGS="-mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16" 23-float.elf
+```
+
+M4 必须同时给出 `-mfloat-abi=hard`（用硬件浮点调用约定）和 `-mfpu=fpv4-sp-d16`（M4 上这块单精度 FPU），缺一不可。
+
+## M3：浮点运算全靠库函数
+
+``` asm
+00000090 <fadd>:
+  90:   b580            push    {r7, lr}
+  92:   b082            sub     sp, #8
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6039            str     r1, [r7, #0]
+  9a:   6839            ldr     r1, [r7, #0]
+  9c:   6878            ldr     r0, [r7, #4]
+  9e:   f000 f931       bl      304 <__addsf3>
+  a2:   4603            mov     r3, r0
+  a4:   4618            mov     r0, r3
+  a6:   3708            adds    r7, #8
+  a8:   46bd            mov     sp, r7
+  aa:   bd80            pop     {r7, pc}
+
+000000ac <fsub>:
+  ac:   b580            push    {r7, lr}
+  ae:   b082            sub     sp, #8
+  b0:   af00            add     r7, sp, #0
+  b2:   6078            str     r0, [r7, #4]
+  b4:   6039            str     r1, [r7, #0]
+  b6:   6839            ldr     r1, [r7, #0]
+  b8:   6878            ldr     r0, [r7, #4]
+  ba:   f000 f921       bl      300 <__aeabi_fsub>
+  be:   4603            mov     r3, r0
+  c0:   4618            mov     r0, r3
+  c2:   3708            adds    r7, #8
+  c4:   46bd            mov     sp, r7
+  c6:   bd80            pop     {r7, pc}
+
+000000c8 <fmul>:
+  c8:   b580            push    {r7, lr}
+  ca:   b082            sub     sp, #8
+  cc:   af00            add     r7, sp, #0
+  ce:   6078            str     r0, [r7, #4]
+  d0:   6039            str     r1, [r7, #0]
+  d2:   6839            ldr     r1, [r7, #0]
+  d4:   6878            ldr     r0, [r7, #4]
+  d6:   f000 fa1d       bl      514 <__aeabi_fmul>
+  da:   4603            mov     r3, r0
+  dc:   4618            mov     r0, r3
+  de:   3708            adds    r7, #8
+  e0:   46bd            mov     sp, r7
+  e2:   bd80            pop     {r7, pc}
+
+000000e4 <fdiv>:
+  e4:   b580            push    {r7, lr}
+  e6:   b082            sub     sp, #8
+  e8:   af00            add     r7, sp, #0
+  ea:   6078            str     r0, [r7, #4]
+  ec:   6039            str     r1, [r7, #0]
+  ee:   6839            ldr     r1, [r7, #0]
+  f0:   6878            ldr     r0, [r7, #4]
+  f2:   f000 fac3       bl      67c <__aeabi_fdiv>
+  f6:   4603            mov     r3, r0
+  f8:   4618            mov     r0, r3
+  fa:   3708            adds    r7, #8
+  fc:   46bd            mov     sp, r7
+  fe:   bd80            pop     {r7, pc}
+
+00000100 <fma>:
+ 100:   b580            push    {r7, lr}
+ 102:   b084            sub     sp, #16
+ 104:   af00            add     r7, sp, #0
+ 106:   60f8            str     r0, [r7, #12]
+ 108:   60b9            str     r1, [r7, #8]
+ 10a:   607a            str     r2, [r7, #4]
+ 10c:   68b9            ldr     r1, [r7, #8]
+ 10e:   68f8            ldr     r0, [r7, #12]
+ 110:   f000 fa00       bl      514 <__aeabi_fmul>
+ 114:   4603            mov     r3, r0
+ 116:   6879            ldr     r1, [r7, #4]
+ 118:   4618            mov     r0, r3
+ 11a:   f000 f8f3       bl      304 <__addsf3>
+ 11e:   4603            mov     r3, r0
+ 120:   4618            mov     r0, r3
+ 122:   3710            adds    r7, #16
+ 124:   46bd            mov     sp, r7
+ 126:   bd80            pop     {r7, pc}
+```
+
+五个函数各只剩一副空壳：把两个 float 参数从 r0/r1 存到栈上，再原样 `ldr` 回 r0/r1，然后 `bl` 一个软件浮点例程。真正的加减乘除是那些例程干的——名字各不相同（fadd 走 `__addsf3`，sub/mul/div 分别走 `__aeabi_fsub`/`__aeabi_fmul`/`__aeabi_fdiv`），但都属于编译器提供的软件浮点运行时。M3 没有 FPU，任何一次浮点运算都得这么绕一圈。
+
+fma 尤其明显：`a*b+c` 先在 `__aeabi_fmul` 里算乘法，返回值在 r0，再喂给 `__addsf3` 算加法——两次函数调用。
+
+另外注意 soft-float 下浮点也走整数寄存器：参数在 r0/r1，返回值在 r0，float 的位模式被当成普通 32 位整数搬运。
+
+## M3：浮点参数走 r0/r1
+
+``` asm
+00000128 <main>:
+ 128:   b580            push    {r7, lr}
+ 12a:   b082            sub     sp, #8
+ 12c:   af00            add     r7, sp, #0
+ 12e:   4914            ldr     r1, [pc, #80]   @ (180 <main+0x58>)
+ 130:   f04f 507f       mov.w   r0, #1069547520 @ 0x3fc00000
+ 134:   f7ff ffac       bl      90 <fadd>
+ 138:   4603            mov     r3, r0
+ 13a:   607b            str     r3, [r7, #4]
+ 13c:   4911            ldr     r1, [pc, #68]   @ (184 <main+0x5c>)
+ 13e:   4812            ldr     r0, [pc, #72]   @ (188 <main+0x60>)
+ 140:   f7ff ffb4       bl      ac <fsub>
+ 144:   4603            mov     r3, r0
+ 146:   607b            str     r3, [r7, #4]
+ 148:   490e            ldr     r1, [pc, #56]   @ (184 <main+0x5c>)
+ 14a:   f04f 4080       mov.w   r0, #1073741824 @ 0x40000000
+ 14e:   f7ff ffbb       bl      c8 <fmul>
+ 152:   4603            mov     r3, r0
+ 154:   607b            str     r3, [r7, #4]
+ 156:   f04f 4180       mov.w   r1, #1073741824 @ 0x40000000
+ 15a:   480c            ldr     r0, [pc, #48]   @ (18c <main+0x64>)
+ 15c:   f7ff ffc2       bl      e4 <fdiv>
+ 160:   4603            mov     r3, r0
+ 162:   607b            str     r3, [r7, #4]
+ 164:   f04f 527e       mov.w   r2, #1065353216 @ 0x3f800000
+ 168:   4906            ldr     r1, [pc, #24]   @ (184 <main+0x5c>)
+ 16a:   f04f 4080       mov.w   r0, #1073741824 @ 0x40000000
+ 16e:   f7ff ffc7       bl      100 <fma>
+ 172:   4603            mov     r3, r0
+ 174:   607b            str     r3, [r7, #4]
+ 176:   2300            movs    r3, #0
+ 178:   4618            mov     r0, r3
+ 17a:   3708            adds    r7, #8
+ 17c:   46bd            mov     sp, r7
+ 17e:   bd80            pop     {r7, pc}
+ 180:   40200000        .word   0x40200000
+ 184:   40400000        .word   0x40400000
+ 188:   41200000        .word   0x41200000
+ 18c:   40e00000        .word   0x40e00000
+ 190:   f04f 0cff       mov.w   ip, #255        @ 0xff
+ 194:   ea1c 52d0       ands.w  r2, ip, r0, lsr #23
+ 198:   bf1e            ittt    ne
+ 19a:   ea1c 53d1       andsne.w        r3, ip, r1, lsr #23
+ 19e:   ea92 0f0c       teqne   r2, ip
+ 1a2:   ea93 0f0c       teqne   r3, ip
+ 1a6:   d06f            beq.n   288 <main+0x160>
+ 1a8:   441a            add     r2, r3
+ 1aa:   ea80 0c01       eor.w   ip, r0, r1
+ 1ae:   0240            lsls    r0, r0, #9
+ 1b0:   bf18            it      ne
+ 1b2:   ea5f 2141       movsne.w        r1, r1, lsl #9
+ 1b6:   d01e            beq.n   1f6 <main+0xce>
+ 1b8:   f04f 6300       mov.w   r3, #134217728  @ 0x8000000
+ 1bc:   ea43 1050       orr.w   r0, r3, r0, lsr #5
+ 1c0:   ea43 1151       orr.w   r1, r3, r1, lsr #5
+ 1c4:   fba0 3101       umull   r3, r1, r0, r1
+ 1c8:   f00c 4000       and.w   r0, ip, #2147483648     @ 0x80000000
+ 1cc:   f5b1 0f00       cmp.w   r1, #8388608    @ 0x800000
+ 1d0:   bf3e            ittt    cc
+ 1d2:   0049            lslcc   r1, r1, #1
+ 1d4:   ea41 71d3       orrcc.w r1, r1, r3, lsr #31
+ 1d8:   005b            lslcc   r3, r3, #1
+ 1da:   ea40 0001       orr.w   r0, r0, r1
+ 1de:   f162 027f       sbc.w   r2, r2, #127    @ 0x7f
+ 1e2:   2afd            cmp     r2, #253        @ 0xfd
+ 1e4:   d81d            bhi.n   222 <main+0xfa>
+ 1e6:   f1b3 4f00       cmp.w   r3, #2147483648 @ 0x80000000
+ 1ea:   eb40 50c2       adc.w   r0, r0, r2, lsl #23
+ 1ee:   bf08            it      eq
+ 1f0:   f020 0001       biceq.w r0, r0, #1
+ 1f4:   4770            bx      lr
+ 1f6:   f090 0f00       teq     r0, #0
+ 1fa:   f00c 4c00       and.w   ip, ip, #2147483648     @ 0x80000000
+ 1fe:   bf08            it      eq
+ 200:   0249            lsleq   r1, r1, #9
+ 202:   ea4c 2050       orr.w   r0, ip, r0, lsr #9
+ 206:   ea40 2051       orr.w   r0, r0, r1, lsr #9
+ 20a:   3a7f            subs    r2, #127        @ 0x7f
+ 20c:   bfc2            ittt    gt
+ 20e:   f1d2 03ff       rsbsgt  r3, r2, #255    @ 0xff
+ 212:   ea40 50c2       orrgt.w r0, r0, r2, lsl #23
+ 216:   4770            bxgt    lr
+ 218:   f440 0000       orr.w   r0, r0, #8388608        @ 0x800000
+ 21c:   f04f 0300       mov.w   r3, #0
+ 220:   3a01            subs    r2, #1
+ 222:   dc5d            bgt.n   2e0 <main+0x1b8>
+ 224:   f112 0f19       cmn.w   r2, #25
+ 228:   bfdc            itt     le
+ 22a:   f000 4000       andle.w r0, r0, #2147483648     @ 0x80000000
+ 22e:   4770            bxle    lr
+ 230:   f1c2 0200       rsb     r2, r2, #0
+ 234:   0041            lsls    r1, r0, #1
+ 236:   fa21 f102       lsr.w   r1, r1, r2
+ 23a:   f1c2 0220       rsb     r2, r2, #32
+ 23e:   fa00 fc02       lsl.w   ip, r0, r2
+ 242:   ea5f 0031       movs.w  r0, r1, rrx
+ 246:   f140 0000       adc.w   r0, r0, #0
+ 24a:   ea53 034c       orrs.w  r3, r3, ip, lsl #1
+ 24e:   bf08            it      eq
+ 250:   ea20 70dc       biceq.w r0, r0, ip, lsr #31
+ 254:   4770            bx      lr
+ 256:   f092 0f00       teq     r2, #0
+ 25a:   f000 4c00       and.w   ip, r0, #2147483648     @ 0x80000000
+ 25e:   bf02            ittt    eq
+ 260:   0040            lsleq   r0, r0, #1
+ 262:   f410 0f00       tsteq.w r0, #8388608    @ 0x800000
+ 266:   3a01            subeq   r2, #1
+ 268:   d0f9            beq.n   25e <main+0x136>
+ 26a:   ea40 000c       orr.w   r0, r0, ip
+ 26e:   f093 0f00       teq     r3, #0
+ 272:   f001 4c00       and.w   ip, r1, #2147483648     @ 0x80000000
+ 276:   bf02            ittt    eq
+ 278:   0049            lsleq   r1, r1, #1
+ 27a:   f411 0f00       tsteq.w r1, #8388608    @ 0x800000
+ 27e:   3b01            subeq   r3, #1
+ 280:   d0f9            beq.n   276 <main+0x14e>
+ 282:   ea41 010c       orr.w   r1, r1, ip
+ 286:   e78f            b.n     1a8 <main+0x80>
+ 288:   ea0c 53d1       and.w   r3, ip, r1, lsr #23
+ 28c:   ea92 0f0c       teq     r2, ip
+ 290:   bf18            it      ne
+ 292:   ea93 0f0c       teqne   r3, ip
+ 296:   d00a            beq.n   2ae <main+0x186>
+ 298:   f030 4c00       bics.w  ip, r0, #2147483648     @ 0x80000000
+ 29c:   bf18            it      ne
+ 29e:   f031 4c00       bicsne.w        ip, r1, #2147483648     @ 0x80000000
+ 2a2:   d1d8            bne.n   256 <main+0x12e>
+ 2a4:   ea80 0001       eor.w   r0, r0, r1
+ 2a8:   f000 4000       and.w   r0, r0, #2147483648     @ 0x80000000
+ 2ac:   4770            bx      lr
+ 2ae:   f090 0f00       teq     r0, #0
+ 2b2:   bf17            itett   ne
+ 2b4:   f090 4f00       teqne   r0, #2147483648 @ 0x80000000
+ 2b8:   4608            moveq   r0, r1
+ 2ba:   f091 0f00       teqne   r1, #0
+ 2be:   f091 4f00       teqne   r1, #2147483648 @ 0x80000000
+ 2c2:   d014            beq.n   2ee <main+0x1c6>
+ 2c4:   ea92 0f0c       teq     r2, ip
+ 2c8:   d101            bne.n   2ce <main+0x1a6>
+ 2ca:   0242            lsls    r2, r0, #9
+ 2cc:   d10f            bne.n   2ee <main+0x1c6>
+ 2ce:   ea93 0f0c       teq     r3, ip
+ 2d2:   d103            bne.n   2dc <main+0x1b4>
+ 2d4:   024b            lsls    r3, r1, #9
+ 2d6:   bf18            it      ne
+ 2d8:   4608            movne   r0, r1
+ 2da:   d108            bne.n   2ee <main+0x1c6>
+ 2dc:   ea80 0001       eor.w   r0, r0, r1
+ 2e0:   f000 4000       and.w   r0, r0, #2147483648     @ 0x80000000
+ 2e4:   f040 40fe       orr.w   r0, r0, #2130706432     @ 0x7f000000
+ 2e8:   f440 0000       orr.w   r0, r0, #8388608        @ 0x800000
+ 2ec:   4770            bx      lr
+ 2ee:   f040 40fe       orr.w   r0, r0, #2130706432     @ 0x7f000000
+ 2f2:   f440 0040       orr.w   r0, r0, #12582912       @ 0xc00000
+ 2f6:   4770            bx      lr
+```
+
+main 里连算五个式子，每次都是把常量装进 r0/r1 再 `bl`，结果从 r0 挪到栈上的 volatile r。顺带可以直接读出每个浮点常量的位模式：`mov.w r0, #1069547520` 就是 0x3fc00000 = 1.5f；字面量池里依次是 2.5(0x40200000)、10.0(0x41200000)、3.0(0x40400000)、7.0(0x40e00000)、1.0(0x3f800000)。
+
+## M4：VFP 硬件指令
+
+``` asm
+00000090 <fadd>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   ed87 0a01       vstr    s0, [r7, #4]
+  9a:   edc7 0a00       vstr    s1, [r7]
+  9e:   ed97 7a01       vldr    s14, [r7, #4]
+  a2:   edd7 7a00       vldr    s15, [r7]
+  a6:   ee77 7a27       vadd.f32        s15, s14, s15
+  aa:   eeb0 0a67       vmov.f32        s0, s15
+  ae:   370c            adds    r7, #12
+  b0:   46bd            mov     sp, r7
+  b2:   f85d 7b04       ldr.w   r7, [sp], #4
+  b6:   4770            bx      lr
+
+000000b8 <fsub>:
+  b8:   b480            push    {r7}
+  ba:   b083            sub     sp, #12
+  bc:   af00            add     r7, sp, #0
+  be:   ed87 0a01       vstr    s0, [r7, #4]
+  c2:   edc7 0a00       vstr    s1, [r7]
+  c6:   ed97 7a01       vldr    s14, [r7, #4]
+  ca:   edd7 7a00       vldr    s15, [r7]
+  ce:   ee77 7a67       vsub.f32        s15, s14, s15
+  d2:   eeb0 0a67       vmov.f32        s0, s15
+  d6:   370c            adds    r7, #12
+  d8:   46bd            mov     sp, r7
+  da:   f85d 7b04       ldr.w   r7, [sp], #4
+  de:   4770            bx      lr
+
+000000e0 <fmul>:
+  e0:   b480            push    {r7}
+  e2:   b083            sub     sp, #12
+  e4:   af00            add     r7, sp, #0
+  e6:   ed87 0a01       vstr    s0, [r7, #4]
+  ea:   edc7 0a00       vstr    s1, [r7]
+  ee:   ed97 7a01       vldr    s14, [r7, #4]
+  f2:   edd7 7a00       vldr    s15, [r7]
+  f6:   ee67 7a27       vmul.f32        s15, s14, s15
+  fa:   eeb0 0a67       vmov.f32        s0, s15
+  fe:   370c            adds    r7, #12
+ 100:   46bd            mov     sp, r7
+ 102:   f85d 7b04       ldr.w   r7, [sp], #4
+ 106:   4770            bx      lr
+
+00000108 <fdiv>:
+ 108:   b480            push    {r7}
+ 10a:   b083            sub     sp, #12
+ 10c:   af00            add     r7, sp, #0
+ 10e:   ed87 0a01       vstr    s0, [r7, #4]
+ 112:   edc7 0a00       vstr    s1, [r7]
+ 116:   ed97 7a01       vldr    s14, [r7, #4]
+ 11a:   edd7 7a00       vldr    s15, [r7]
+ 11e:   eec7 6a27       vdiv.f32        s13, s14, s15
+ 122:   eef0 7a66       vmov.f32        s15, s13
+ 126:   eeb0 0a67       vmov.f32        s0, s15
+ 12a:   370c            adds    r7, #12
+ 12c:   46bd            mov     sp, r7
+ 12e:   f85d 7b04       ldr.w   r7, [sp], #4
+ 132:   4770            bx      lr
+
+00000134 <fma>:
+ 134:   b480            push    {r7}
+ 136:   b085            sub     sp, #20
+ 138:   af00            add     r7, sp, #0
+ 13a:   ed87 0a03       vstr    s0, [r7, #12]
+ 13e:   edc7 0a02       vstr    s1, [r7, #8]
+ 142:   ed87 1a01       vstr    s2, [r7, #4]
+ 146:   ed97 7a03       vldr    s14, [r7, #12]
+ 14a:   edd7 7a02       vldr    s15, [r7, #8]
+ 14e:   ee27 7a27       vmul.f32        s14, s14, s15
+ 152:   edd7 7a01       vldr    s15, [r7, #4]
+ 156:   ee77 7a27       vadd.f32        s15, s14, s15
+ 15a:   eeb0 0a67       vmov.f32        s0, s15
+ 15e:   3714            adds    r7, #20
+ 160:   46bd            mov     sp, r7
+ 162:   f85d 7b04       ldr.w   r7, [sp], #4
+ 166:   4770            bx      lr
+```
+
+函数还是那副“把参数存栈再取回”的空壳（-O0 的锅），但真正干活的两条变了：fadd 里是 `vstr s0/s1`（存）、`vldr s14/s15`（取回）、**`vadd.f32 s15, s14, s15`**、`vmov.f32 s0, s15`（结果放回 s0 返回）。mul/div 同理，换成 `vmul.f32` / `vdiv.f32`。
+
+也就是说：M3 里的一次函数调用，在 M4 里变成了一条指令。浮点参数也不再走 r0/r1，而是走 VFP 寄存器 s0、s1。
+
+（这里没有出现 VPUSH。VPUSH 只在函数需要跨调用保存浮点寄存器时才出现，而本节的这些函数都是叶子，没什么要保的。尾声用的是 `ldr.w r7, [sp], #4` 而不是 `pop {r7}`，效果一样，都是把栈上存的 r7 收回来。）
+
+## M4：浮点参数走 s0/s1
+
+``` asm
+00000168 <main>:
+ 168:   b580            push    {r7, lr}
+ 16a:   b082            sub     sp, #8
+ 16c:   af00            add     r7, sp, #0
+ 16e:   eef0 0a04       vmov.f32        s1, #4  @ 0x40200000  2.5
+ 172:   eeb7 0a08       vmov.f32        s0, #120        @ 0x3fc00000  1.5
+ 176:   f7ff ff8b       bl      90 <fadd>
+ 17a:   eef0 7a40       vmov.f32        s15, s0
+ 17e:   edc7 7a01       vstr    s15, [r7, #4]
+ 182:   eef0 0a08       vmov.f32        s1, #8  @ 0x40400000  3.0
+ 186:   eeb2 0a04       vmov.f32        s0, #36 @ 0x41200000  10.0
+ 18a:   f7ff ff95       bl      b8 <fsub>
+ 18e:   eef0 7a40       vmov.f32        s15, s0
+ 192:   edc7 7a01       vstr    s15, [r7, #4]
+ 196:   eef0 0a08       vmov.f32        s1, #8  @ 0x40400000  3.0
+ 19a:   eeb0 0a00       vmov.f32        s0, #0  @ 0x40000000  2.0
+ 19e:   f7ff ff9f       bl      e0 <fmul>
+ 1a2:   eef0 7a40       vmov.f32        s15, s0
+ 1a6:   edc7 7a01       vstr    s15, [r7, #4]
+ 1aa:   eef0 0a00       vmov.f32        s1, #0  @ 0x40000000  2.0
+ 1ae:   eeb1 0a0c       vmov.f32        s0, #28 @ 0x40e00000  7.0
+ 1b2:   f7ff ffa9       bl      108 <fdiv>
+ 1b6:   eef0 7a40       vmov.f32        s15, s0
+ 1ba:   edc7 7a01       vstr    s15, [r7, #4]
+ 1be:   eeb7 1a00       vmov.f32        s2, #112        @ 0x3f800000  1.0
+ 1c2:   eef0 0a08       vmov.f32        s1, #8  @ 0x40400000  3.0
+ 1c6:   eeb0 0a00       vmov.f32        s0, #0  @ 0x40000000  2.0
+ 1ca:   f7ff ffb3       bl      134 <fma>
+ 1ce:   eef0 7a40       vmov.f32        s15, s0
+ 1d2:   edc7 7a01       vstr    s15, [r7, #4]
+ 1d6:   2300            movs    r3, #0
+ 1d8:   4618            mov     r0, r3
+ 1da:   3708            adds    r7, #8
+ 1dc:   46bd            mov     sp, r7
+ 1de:   bd80            pop     {r7, pc}
+```
+
+main 的对比更直接：M3 版是把常量写进 r0/r1 再 `bl`；M4 版是写进 **s0/s1**（`vmov.f32 s0, #120` 这种，120 是 1.5f 的 VFP 立即数编码），再 `bl`，返回值在 s0 里。VFP 有一套专门的浮点立即数编码，所以像 1.5、2.0、3.0 这类“规整”的数不用访问内存，一条 vmov 就装进寄存器了。
+
+最后提醒一句：M4 这里是 fpv4-**sp**-d16，只有**单精度**。本节所有运算都是 float；一旦出现 double，照样得回软件库——下一个实验的 float_to_double 会看到这一点。
+
+# 类型转换的指令代价
+
+``` c
+/*
+ * 观察目标: 类型转换的指令代价
+ *
+ * 编译: make 24-cast.elf
+ * 反汇编: arm-none-eabi-objdump -d 24-cast.elf
+ *
+ * 关注点:
+ *   1. float ←→ int: VCVT 指令 (M4) 或 __aeabi_f2iz / __aeabi_i2f (M3)
+ *   2. 浮点截断 vs 四舍五入: C 强制转换是向零截断
+ *   3. double ←→ float: 精度转换指令
+ */
+
+static int float_to_int(float f) {
+    return (int)f;
+}
+
+static float int_to_float(int i) {
+    return (float)i;
+}
+
+static float truncate_test(float f) {
+    return (int)f;       /* 1.9 → 1,  -1.9 → -1 */
+}
+
+static double float_to_double(float f) {
+    return (double)f;
+}
+
+static int unsigned_cast(unsigned int u) {
+    return (int)u;       /* 大 unsigned → signed */
+}
+
+int main(void) {
+    volatile int ri;
+    volatile float rf;
+    volatile double rd;
+
+    ri = float_to_int(3.14f);
+    rf = int_to_float(42);
+    ri = truncate_test(1.9f);
+    rd = float_to_double(3.14f);
+    ri = unsigned_cast(0xFFFFFF00u);
+    return 0;
+}
+```
+
+## M3：每个转换都是一次库调用
+
+``` asm
+00000090 <float_to_int>:
+  90:   b580            push    {r7, lr}
+  92:   b082            sub     sp, #8
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6878            ldr     r0, [r7, #4]
+  9a:   f000 fb2f       bl      6fc <__aeabi_f2iz>
+  9e:   4603            mov     r3, r0
+  a0:   4618            mov     r0, r3
+  a2:   3708            adds    r7, #8
+  a4:   46bd            mov     sp, r7
+  a6:   bd80            pop     {r7, pc}
+
+000000a8 <int_to_float>:
+  a8:   b580            push    {r7, lr}
+  aa:   b082            sub     sp, #8
+  ac:   af00            add     r7, sp, #0
+  ae:   6078            str     r0, [r7, #4]
+  b0:   6878            ldr     r0, [r7, #4]
+  b2:   f000 facf       bl      654 <__aeabi_i2f>
+  b6:   4603            mov     r3, r0
+  b8:   4618            mov     r0, r3
+  ba:   3708            adds    r7, #8
+  bc:   46bd            mov     sp, r7
+  be:   bd80            pop     {r7, pc}
+
+000000c0 <truncate_test>:
+  c0:   b580            push    {r7, lr}
+  c2:   b082            sub     sp, #8
+  c4:   af00            add     r7, sp, #0
+  c6:   6078            str     r0, [r7, #4]
+  c8:   6878            ldr     r0, [r7, #4]
+  ca:   f000 fb17       bl      6fc <__aeabi_f2iz>
+  ce:   4603            mov     r3, r0
+  d0:   4618            mov     r0, r3
+  d2:   f000 fabf       bl      654 <__aeabi_i2f>
+  d6:   4603            mov     r3, r0
+  d8:   4618            mov     r0, r3
+  da:   3708            adds    r7, #8
+  dc:   46bd            mov     sp, r7
+  de:   bd80            pop     {r7, pc}
+
+000000e0 <float_to_double>:
+  e0:   b580            push    {r7, lr}
+  e2:   b082            sub     sp, #8
+  e4:   af00            add     r7, sp, #0
+  e6:   6078            str     r0, [r7, #4]
+  e8:   6878            ldr     r0, [r7, #4]
+  ea:   f000 f9a1       bl      430 <__aeabi_f2d>
+  ee:   4602            mov     r2, r0
+  f0:   460b            mov     r3, r1
+  f2:   4610            mov     r0, r2
+  f4:   4619            mov     r1, r3
+  f6:   3708            adds    r7, #8
+  f8:   46bd            mov     sp, r7
+  fa:   bd80            pop     {r7, pc}
+```
+
+四个函数各买各账：
+- `float_to_int` → `bl __aeabi_f2iz`（f→signed int，iz 表示向零取整）；
+- `int_to_float` → `bl __aeabi_i2f`；
+- `truncate_test` → 先 `__aeabi_f2iz` 再 `__aeabi_i2f`（函数返回 float，而 `(int)f` 是向零截断，转成 int 之后又得转回 float）；
+- `float_to_double` → `bl __aeabi_f2d`，返回值占 **r0:r1 两个寄存器**，因为 double 是 64 位。
+
+## M3：unsigned ↔ signed 是零成本
+
+``` asm
+000000fc <unsigned_cast>:
+  fc:   b480            push    {r7}
+  fe:   b083            sub     sp, #12
+ 100:   af00            add     r7, sp, #0
+ 102:   6078            str     r0, [r7, #4]
+ 104:   687b            ldr     r3, [r7, #4]
+ 106:   4618            mov     r0, r3
+ 108:   370c            adds    r7, #12
+ 10a:   46bd            mov     sp, r7
+ 10c:   bc80            pop     {r7}
+ 10e:   4770            bx      lr
+```
+
+`(int)u` 编译出来只有 `mov r0, r3`，没有任何实际运算。因为 unsigned→signed 只是同一串比特换个解释，位模式一模一样，CPU 什么也不用做。
+
+## M4：VCVT 一条指令
+
+``` asm
+00000090 <float_to_int>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   ed87 0a01       vstr    s0, [r7, #4]
+  9a:   edd7 7a01       vldr    s15, [r7, #4]
+  9e:   eefd 7ae7       vcvt.s32.f32    s15, s15
+  a2:   ee17 3a90       vmov    r3, s15
+  a6:   4618            mov     r0, r3
+  a8:   370c            adds    r7, #12
+  aa:   46bd            mov     sp, r7
+  ac:   f85d 7b04       ldr.w   r7, [sp], #4
+  b0:   4770            bx      lr
+
+000000b2 <int_to_float>:
+  b2:   b480            push    {r7}
+  b4:   b083            sub     sp, #12
+  b6:   af00            add     r7, sp, #0
+  b8:   6078            str     r0, [r7, #4]
+  ba:   687b            ldr     r3, [r7, #4]
+  bc:   ee07 3a90       vmov    s15, r3
+  c0:   eef8 7ae7       vcvt.f32.s32    s15, s15
+  c4:   eeb0 0a67       vmov.f32        s0, s15
+  c8:   370c            adds    r7, #12
+  ca:   46bd            mov     sp, r7
+  cc:   f85d 7b04       ldr.w   r7, [sp], #4
+  d0:   4770            bx      lr
+
+000000d2 <truncate_test>:
+  d2:   b480            push    {r7}
+  d4:   b083            sub     sp, #12
+  d6:   af00            add     r7, sp, #0
+  d8:   ed87 0a01       vstr    s0, [r7, #4]
+  dc:   edd7 7a01       vldr    s15, [r7, #4]
+  e0:   eefd 7ae7       vcvt.s32.f32    s15, s15
+  e4:   eef8 7ae7       vcvt.f32.s32    s15, s15
+  e8:   eeb0 0a67       vmov.f32        s0, s15
+  ec:   370c            adds    r7, #12
+  ee:   46bd            mov     sp, r7
+  f0:   f85d 7b04       ldr.w   r7, [sp], #4
+  f4:   4770            bx      lr
+```
+
+- `float_to_int`：`vcvt.s32.f32 s15, s15`——一条指令把 float 转成 int。这条不带舍入后缀的 VCVT 默认就是**向零取整**，正好对上 C 的强制转换语义。
+- `int_to_float`：`vmov s15, r3` 把整数挪进浮点寄存器，再 `vcvt.f32.s32 s15, s15`。
+- `truncate_test`：`vcvt.s32.f32` 再 `vcvt.f32.s32`，两条来回，同样一条库调用都没有。
+
+## M4：double 仍然走软件库
+
+``` asm
+000000f6 <float_to_double>:
+  f6:   b580            push    {r7, lr}
+  f8:   b082            sub     sp, #8
+  fa:   af00            add     r7, sp, #0
+  fc:   ed87 0a01       vstr    s0, [r7, #4]
+ 100:   6878            ldr     r0, [r7, #4]
+ 102:   f000 f9af       bl      464 <__aeabi_f2d>
+ 106:   4602            mov     r2, r0
+ 108:   460b            mov     r3, r1
+ 10a:   ec43 2b17       vmov    d7, r2, r3
+ 10e:   eeb0 0a47       vmov.f32        s0, s14
+ 112:   eef0 0a67       vmov.f32        s1, s15
+ 116:   3708            adds    r7, #8
+ 118:   46bd            mov     sp, r7
+ 11a:   bd80            pop     {r7, pc}
+
+0000011c <unsigned_cast>:
+ 11c:   b480            push    {r7}
+ 11e:   b083            sub     sp, #12
+ 120:   af00            add     r7, sp, #0
+ 122:   6078            str     r0, [r7, #4]
+ 124:   687b            ldr     r3, [r7, #4]
+ 126:   4618            mov     r0, r3
+ 128:   370c            adds    r7, #12
+ 12a:   46bd            mov     sp, r7
+ 12c:   f85d 7b04       ldr.w   r7, [sp], #4
+ 130:   4770            bx      lr
+```
+
+即使 M4 带 FPU，`float → double` 还是 `bl __aeabi_f2d`。因为 fpv4-sp-d16 只带单精度硬件，double（64 位）在硬件层面根本不存在。转换完之后结果用 `vmov d7, r2, r3` 塞进一个双字浮点寄存器——但计算本身，还是软件干的。
+
+（顺带：M4 版的 `unsigned_cast` 依旧是 `mov r0, r3`，和 M3 一样是零成本。）
+# 优化等级
+
+前面所有实验都跑在 -O0 下——那纯粹是为了“看清每一步”。但真实工程都开优化，所以这一节把同一份代码在 -O0 / -O1 / -O2 / -Os 下各编一遍，看编译器到底动了多少手脚。
+
+``` c
+/*
+ * 观察目标: 不同优化等级对同一代码的指令差异
+ *
+ * 对比:
+ *   make 25-optimization.elf                 → -O0
+ *   make CFLAGS="-O1" 25-optimization.elf    → -O1
+ *   make CFLAGS="-O2" 25-optimization.elf    → -O2
+ *   make CFLAGS="-Os" 25-optimization.elf    → -Os
+ *
+ * 观察方式:
+ *   arm-none-eabi-objdump -d 25-optimization.elf | wc -l           (指令总量)
+ *   arm-none-eabi-objdump -d 25-optimization.elf | grep '<main>:' -A 30 (main 大小)
+ *
+ * 关注点:
+ *   1. -O0: 每个 C 语句独立, 变量存在栈上 → 指令多, 有大量 LDR/STR
+ *   2. -O1: 基本优化, 变量尽量留寄存器 → 指令减少一半
+ *   3. -O2: 更激进, 可能循环展开 → 指令更多但执行更快
+ *   4. -Os: 侧重代码大小, 可能用较慢但更短的指令序列
+ */
+
+static int sum_array(int *arr, int n) {
+    int sum = 0;
+    for (int i = 0; i < n; i++)
+        sum += arr[i];
+    return sum;
+}
+
+static int double_value(int x) {
+    return x * 2;
+}
+
+static int compute(int a, int b) {
+    int x = a + b;
+    int y = a - b;
+    return double_value(x) + double_value(y);
+}
+
+int main(void) {
+    int data[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    volatile int r;
+    r = sum_array(data, 10);
+    r = compute(100, 50);
+    return 0;
+}
+```
+
+``` bash
+make 25-optimization.elf
+make CFLAGS="-O1 -mthumb -mcpu=cortex-m3 -ffreestanding" 25-optimization.elf
+make CFLAGS="-O2 -mthumb -mcpu=cortex-m3 -ffreestanding" 25-optimization.elf
+make CFLAGS="-Os -mthumb -mcpu=cortex-m3 -ffreestanding" 25-optimization.elf
+```
+
+（改 CFLAGS 时记得补回 `-mthumb -mcpu=cortex-m3`，否则会编出 ARM 指令，M3 跑不了。）
+
+## -O0
+
+``` asm
+00000090 <sum_array>:
+  90:   b480            push    {r7}
+  92:   b085            sub     sp, #20
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6039            str     r1, [r7, #0]
+  9a:   2300            movs    r3, #0
+  9c:   60fb            str     r3, [r7, #12]
+  9e:   2300            movs    r3, #0
+  a0:   60bb            str     r3, [r7, #8]
+  a2:   e00a            b.n     ba <sum_array+0x2a>
+  a4:   68bb            ldr     r3, [r7, #8]
+  a6:   009b            lsls    r3, r3, #2
+  a8:   687a            ldr     r2, [r7, #4]
+  aa:   4413            add     r3, r2
+  ac:   681b            ldr     r3, [r3, #0]
+  ae:   68fa            ldr     r2, [r7, #12]
+  b0:   4413            add     r3, r2
+  b2:   60fb            str     r3, [r7, #12]
+  b4:   68bb            ldr     r3, [r7, #8]
+  b6:   3301            adds    r3, #1
+  b8:   60bb            str     r3, [r7, #8]
+  ba:   68ba            ldr     r2, [r7, #8]
+  bc:   683b            ldr     r3, [r7, #0]
+  be:   429a            cmp     r2, r3
+  c0:   dbf0            blt.n   a4 <sum_array+0x14>
+  c2:   68fb            ldr     r3, [r7, #12]
+  c4:   4618            mov     r0, r3
+  c6:   3714            adds    r7, #20
+  c8:   46bd            mov     sp, r7
+  ca:   bc80            pop     {r7}
+  cc:   4770            bx      lr
+
+000000ce <double_value>:
+  ce:   b480            push    {r7}
+  d0:   b083            sub     sp, #12
+  d2:   af00            add     r7, sp, #0
+  d4:   6078            str     r0, [r7, #4]
+  d6:   687b            ldr     r3, [r7, #4]
+  d8:   005b            lsls    r3, r3, #1
+  da:   4618            mov     r0, r3
+  dc:   370c            adds    r7, #12
+  de:   46bd            mov     sp, r7
+  e0:   bc80            pop     {r7}
+  e2:   4770            bx      lr
+
+000000e4 <compute>:
+  e4:   b590            push    {r4, r7, lr}
+  e6:   b085            sub     sp, #20
+  e8:   af00            add     r7, sp, #0
+  ea:   6078            str     r0, [r7, #4]
+  ec:   6039            str     r1, [r7, #0]
+  ee:   687a            ldr     r2, [r7, #4]
+  f0:   683b            ldr     r3, [r7, #0]
+  f2:   4413            add     r3, r2
+  f4:   60fb            str     r3, [r7, #12]
+  f6:   687a            ldr     r2, [r7, #4]
+  f8:   683b            ldr     r3, [r7, #0]
+  fa:   1ad3            subs    r3, r2, r3
+  fc:   60bb            str     r3, [r7, #8]
+  fe:   68f8            ldr     r0, [r7, #12]
+ 100:   f7ff ffe5       bl      ce <double_value>
+ 104:   4604            mov     r4, r0
+ 106:   68b8            ldr     r0, [r7, #8]
+ 108:   f7ff ffe1       bl      ce <double_value>
+ 10c:   4603            mov     r3, r0
+ 10e:   4423            add     r3, r4
+ 110:   4618            mov     r0, r3
+ 112:   3714            adds    r7, #20
+ 114:   46bd            mov     sp, r7
+ 116:   bd90            pop     {r4, r7, pc}
+
+00000118 <main>:
+ 118:   b5b0            push    {r4, r5, r7, lr}
+ 11a:   b08c            sub     sp, #48 @ 0x30
+ 11c:   af00            add     r7, sp, #0
+ 11e:   4b0f            ldr     r3, [pc, #60]   @ (15c <main+0x44>)
+ 120:   f107 0408       add.w   r4, r7, #8
+ 124:   461d            mov     r5, r3
+ 126:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+ 128:   c40f            stmia   r4!, {r0, r1, r2, r3}
+ 12a:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+ 12c:   c40f            stmia   r4!, {r0, r1, r2, r3}
+ 12e:   e895 0003       ldmia.w r5, {r0, r1}
+ 132:   e884 0003       stmia.w r4, {r0, r1}
+ 136:   f107 0308       add.w   r3, r7, #8
+ 13a:   210a            movs    r1, #10
+ 13c:   4618            mov     r0, r3
+ 13e:   f7ff ffa7       bl      90 <sum_array>
+ 142:   4603            mov     r3, r0
+ 144:   607b            str     r3, [r7, #4]
+ 146:   2132            movs    r1, #50 @ 0x32
+ 148:   2064            movs    r0, #100        @ 0x64
+ 14a:   f7ff ffcb       bl      e4 <compute>
+ 14e:   4603            mov     r3, r0
+ 150:   607b            str     r3, [r7, #4]
+ 152:   2300            movs    r3, #0
+ 154:   4618            mov     r0, r3
+ 156:   3730            adds    r7, #48 @ 0x30
+ 158:   46bd            mov     sp, r7
+ 15a:   bdb0            pop     {r4, r5, r7, pc}
+ 15c:   00000160        .word   0x00000160
+ 160:   00000001        .word   0x00000001
+ 164:   00000002        .word   0x00000002
+ 168:   00000003        .word   0x00000003
+ 16c:   00000004        .word   0x00000004
+ 170:   00000005        .word   0x00000005
+ 174:   00000006        .word   0x00000006
+ 178:   00000007        .word   0x00000007
+ 17c:   00000008        .word   0x00000008
+ 180:   00000009        .word   0x00000009
+ 184:   0000000a        .word   0x0000000a
+```
+
+-O0 下一切照本宣科：sum_array 每次迭代都老老实实 `ldr` 数组元素、`lsls r3, r3, #2` 算下标偏移；compute 先把 x、y 存到栈上，再两次 `bl double_value`；main 把 .rodata 里那 10 个常量用 `ldmia/stmia` 拷到栈上的 data[]，再依次调用。指令很碎，但每一句都能对上源码。
+
+## -O1
+
+``` asm
+000000a4 <main>:
+  a4:   b410            push    {r4}
+  a6:   b08d            sub     sp, #52 @ 0x34
+  a8:   f10d 0c08       add.w   ip, sp, #8
+  ac:   4c0d            ldr     r4, [pc, #52]   @ (e4 <main+0x40>)
+  ae:   cc0f            ldmia   r4!, {r0, r1, r2, r3}
+  b0:   e8ac 000f       stmia.w ip!, {r0, r1, r2, r3}
+  b4:   cc0f            ldmia   r4!, {r0, r1, r2, r3}
+  b6:   e8ac 000f       stmia.w ip!, {r0, r1, r2, r3}
+  ba:   e894 0003       ldmia.w r4, {r0, r1}
+  be:   e88c 0003       stmia.w ip, {r0, r1}
+  c2:   ab02            add     r3, sp, #8
+  c4:   a80c            add     r0, sp, #48     @ 0x30
+  c6:   2200            movs    r2, #0
+  c8:   f853 1b04       ldr.w   r1, [r3], #4
+  cc:   440a            add     r2, r1
+  ce:   4283            cmp     r3, r0
+  d0:   d1fa            bne.n   c8 <main+0x24>
+  d2:   9201            str     r2, [sp, #4]
+  d4:   f44f 73c8       mov.w   r3, #400        @ 0x190
+  d8:   9301            str     r3, [sp, #4]
+  da:   2000            movs    r0, #0
+  dc:   b00d            add     sp, #52 @ 0x34
+  de:   bc10            pop     {r4}
+  e0:   4770            bx      lr
+  e2:   bf00            nop
+  e4:   000000e8        .word   0x000000e8
+  e8:   00000001        .word   0x00000001
+  ec:   00000002        .word   0x00000002
+  f0:   00000003        .word   0x00000003
+  f4:   00000004        .word   0x00000004
+  f8:   00000005        .word   0x00000005
+  fc:   00000006        .word   0x00000006
+ 100:   00000007        .word   0x00000007
+ 104:   00000008        .word   0x00000008
+ 108:   00000009        .word   0x00000009
+ 10c:   0000000a        .word   0x0000000a
+```
+
+到 -O1，三个 helper 全被内联进了 main，而且 `compute(100,50)` 的结果在编译期就算出来了：`mov.w r3, #400`（(100+50)*2 + (100-50)*2 = 300 + 100 = 400）。sum_array 也被内联成一个内嵌的小循环（`ldr.w r1,[r3],#4; add r2,r1; cmp; bne`，把 10 个数累加到 r2，结果是 55）。整个文件里已经找不到 sum_array/compute 这些独立函数了。
+
+## -O2
+
+``` asm
+000000a4 <main>:
+  a4:   b570            push    {r4, r5, r6, lr}
+  a6:   2400            movs    r4, #0
+  a8:   b08c            sub     sp, #48 @ 0x30
+  aa:   4d0e            ldr     r5, [pc, #56]   @ (e4 <main+0x40>)
+  ac:   f10d 0e08       add.w   lr, sp, #8
+  b0:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+  b2:   e8ae 000f       stmia.w lr!, {r0, r1, r2, r3}
+  b6:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+  b8:   e8ae 000f       stmia.w lr!, {r0, r1, r2, r3}
+  bc:   e895 0003       ldmia.w r5, {r0, r1}
+  c0:   e88e 0003       stmia.w lr, {r0, r1}
+  c4:   ae0c            add     r6, sp, #48     @ 0x30
+  c6:   f10d 0c08       add.w   ip, sp, #8
+  ca:   f85c 3b04       ldr.w   r3, [ip], #4
+  ce:   45b4            cmp     ip, r6
+  d0:   441c            add     r4, r3
+  d2:   d1fa            bne.n   ca <main+0x26>
+  d4:   f44f 73c8       mov.w   r3, #400        @ 0x190
+  d8:   2000            movs    r0, #0
+  da:   9401            str     r4, [sp, #4]
+  dc:   9301            str     r3, [sp, #4]
+  de:   b00c            add     sp, #48 @ 0x30
+  e0:   bd70            pop     {r4, r5, r6, pc}
+  e2:   bf00            nop
+  e4:   000000e8        .word   0x000000e8
+  e8:   00000001        .word   0x00000001
+  ec:   00000002        .word   0x00000002
+  f0:   00000003        .word   0x00000003
+  f4:   00000004        .word   0x00000004
+  f8:   00000005        .word   0x00000005
+  fc:   00000006        .word   0x00000006
+ 100:   00000007        .word   0x00000007
+ 104:   00000008        .word   0x00000008
+ 108:   00000009        .word   0x00000009
+ 10c:   0000000a        .word   0x0000000a
+```
+
+-O2 和 -O1 的结果很接近，寄存器分配更紧一点：累加器提前初始化成 r4，循环体少了几次搬运，但结构完全一样。
+
+## -Os
+
+``` asm
+00000080 <main>:
+  80:   b530            push    {r4, r5, lr}
+  82:   4d0d            ldr     r5, [pc, #52]   @ (b8 <main+0x38>)
+  84:   b08d            sub     sp, #52 @ 0x34
+  86:   ac02            add     r4, sp, #8
+  88:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+  8a:   c40f            stmia   r4!, {r0, r1, r2, r3}
+  8c:   cd0f            ldmia   r5!, {r0, r1, r2, r3}
+  8e:   c40f            stmia   r4!, {r0, r1, r2, r3}
+  90:   e895 0003       ldmia.w r5, {r0, r1}
+  94:   2300            movs    r3, #0
+  96:   461a            mov     r2, r3
+  98:   e884 0003       stmia.w r4, {r0, r1}
+  9c:   a902            add     r1, sp, #8
+  9e:   f851 0b04       ldr.w   r0, [r1], #4
+  a2:   3201            adds    r2, #1
+  a4:   2a0a            cmp     r2, #10
+  a6:   4403            add     r3, r0
+  a8:   d1f9            bne.n   9e <main+0x1e>
+  aa:   9301            str     r3, [sp, #4]
+  ac:   2000            movs    r0, #0
+  ae:   f44f 73c8       mov.w   r3, #400        @ 0x190
+  b2:   9301            str     r3, [sp, #4]
+  b4:   b00d            add     sp, #52 @ 0x34
+  b6:   bd30            pop     {r4, r5, pc}
+  b8:   000000bc        .word   0x000000bc
+  bc:   00000001        .word   0x00000001
+  c0:   00000002        .word   0x00000002
+  c4:   00000003        .word   0x00000003
+  c8:   00000004        .word   0x00000004
+  cc:   00000005        .word   0x00000005
+  d0:   00000006        .word   0x00000006
+  d4:   00000007        .word   0x00000007
+  d8:   00000008        .word   0x00000008
+  dc:   00000009        .word   0x00000009
+  e0:   0000000a        .word   0x0000000a
+```
+
+-Os 优先代码尺寸，指令最少。它把循环改成了显式计数器版本（`adds r2,#1; cmp r2,#10`），寄存器用得更省，连栈帧的排布都变了。代价是循环控制多一条指令，但换来更短的代码。
+
+## 指令量对比
+
+把整个 ELF（含 startup 的 Reset_Handler）数一遍：
+
+| 优化等级 | 指令条数 |
+|---------|---------|
+| -O0 | 123 |
+| -O1 | 57 |
+| -O2 | 58 |
+| -Os | 42 |
+
+从 -O0 到 -O1 直接砍掉一半多，主要就来自“内联 + 常量折叠 + 变量留寄存器”。-O2 比 -O1 略多几条，是因为它更激进地展开/重排，指令数不一定最少，但执行更快；真正拼尺寸要用 -Os。
+
+# 尾调用优化
+
+尾调用优化（TCO）指的是：如果一个函数的最后一步是 `return f(x);`，那么 f 返回之后本函数也没别的事可做了，于是没必要再压一个栈帧——编译器可以把 `bl f; pop {pc}` 直接换成一条 `b f`。
+
+``` c
+/*
+ * 观察目标: 尾调用优化
+ *
+ * 对比:
+ *   make 26-tail-call.elf                → -O0, 无尾调用优化
+ *   make CFLAGS="-O2" 26-tail-call.elf   → -O2, 有尾调用优化
+ *
+ * 关注点:
+ *   1. 无优化: 尾部调用也 PUSH {LR} → BL → POP {PC}, 栈增长
+ *   2. 优化后: 尾部调用变成 B (直接跳转), 不消耗栈
+ *   3. 尾递归 → 循环 (汇编上看到 B 跳回自身)
+ */
+
+/* 尾递归: 最后一步是递归调用, 编译器可优化为循环 */
+static int tail_factorial(int n, int acc) {
+    if (n <= 1)
+        return acc;
+    return tail_factorial(n - 1, acc * n);
+}
+
+/* 非尾递归: 最后一步是乘法而非递归调用, 无法优化 */
+static int factorial(int n) {
+    if (n <= 1)
+        return 1;
+    return n * factorial(n - 1);
+}
+
+/* 尾调用: 直接 return 另一个函数的结果 */
+static int helper(int x) {
+    return x + 1;
+}
+
+static int tail_call(int x) {
+    return helper(x);     /* 可优化为 B helper (不新建栈帧) */
+}
+
+/* 非尾调用: 返回前还有操作 */
+static int non_tail_call(int x) {
+    int r = helper(x);
+    return r + 1;
+}
+
+int main(void) {
+    volatile int r;
+    r = factorial(5);
+    r = tail_factorial(5, 1);
+    r = tail_call(42);
+    r = non_tail_call(42);
+    return 0;
+}
+```
+
+## -O0：全部老老实实调用
+
+``` asm
+00000090 <tail_factorial>:
+  90:   b580            push    {r7, lr}
+  92:   b082            sub     sp, #8
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6039            str     r1, [r7, #0]
+  9a:   687b            ldr     r3, [r7, #4]
+  9c:   2b01            cmp     r3, #1
+  9e:   dc01            bgt.n   a4 <tail_factorial+0x14>
+  a0:   683b            ldr     r3, [r7, #0]
+  a2:   e009            b.n     b8 <tail_factorial+0x28>
+  a4:   687b            ldr     r3, [r7, #4]
+  a6:   1e58            subs    r0, r3, #1
+  a8:   683b            ldr     r3, [r7, #0]
+  aa:   687a            ldr     r2, [r7, #4]
+  ac:   fb02 f303       mul.w   r3, r2, r3
+  b0:   4619            mov     r1, r3
+  b2:   f7ff ffed       bl      90 <tail_factorial>
+  b6:   4603            mov     r3, r0
+  b8:   4618            mov     r0, r3
+  ba:   3708            adds    r7, #8
+  bc:   46bd            mov     sp, r7
+  be:   bd80            pop     {r7, pc}
+
+000000c0 <factorial>:
+  c0:   b580            push    {r7, lr}
+  c2:   b082            sub     sp, #8
+  c4:   af00            add     r7, sp, #0
+  c6:   6078            str     r0, [r7, #4]
+  c8:   687b            ldr     r3, [r7, #4]
+  ca:   2b01            cmp     r3, #1
+  cc:   dc01            bgt.n   d2 <factorial+0x12>
+  ce:   2301            movs    r3, #1
+  d0:   e008            b.n     e4 <factorial+0x24>
+  d2:   687b            ldr     r3, [r7, #4]
+  d4:   3b01            subs    r3, #1
+  d6:   4618            mov     r0, r3
+  d8:   f7ff fff2       bl      c0 <factorial>
+  dc:   4602            mov     r2, r0
+  de:   687b            ldr     r3, [r7, #4]
+  e0:   fb02 f303       mul.w   r3, r2, r3
+  e4:   4618            mov     r0, r3
+  e6:   3708            adds    r7, #8
+  e8:   46bd            mov     sp, r7
+  ea:   bd80            pop     {r7, pc}
+
+00000102 <tail_call>:
+ 102:   b580            push    {r7, lr}
+ 104:   b082            sub     sp, #8
+ 106:   af00            add     r7, sp, #0
+ 108:   6078            str     r0, [r7, #4]
+ 10a:   6878            ldr     r0, [r7, #4]
+ 10c:   f7ff ffee       bl      ec <helper>
+ 110:   4603            mov     r3, r0
+ 112:   4618            mov     r0, r3
+ 114:   3708            adds    r7, #8
+ 116:   46bd            mov     sp, r7
+ 118:   bd80            pop     {r7, pc}
+
+0000011a <non_tail_call>:
+ 11a:   b580            push    {r7, lr}
+ 11c:   b084            sub     sp, #16
+ 11e:   af00            add     r7, sp, #0
+ 120:   6078            str     r0, [r7, #4]
+ 122:   6878            ldr     r0, [r7, #4]
+ 124:   f7ff ffe2       bl      ec <helper>
+ 128:   60f8            str     r0, [r7, #12]
+ 12a:   68fb            ldr     r3, [r7, #12]
+ 12c:   3301            adds    r3, #1
+ 12e:   4618            mov     r0, r3
+ 130:   3710            adds    r7, #16
+ 132:   46bd            mov     sp, r7
+ 134:   bd80            pop     {r7, pc}
+```
+
+-O0 不做任何 TCO。tail_factorial 结尾是 `bl tail_factorial`（又一次递归调用）然后才 `pop {r7, pc}` 返回——栈帧一层层压，虽然它本质上等价于一个循环。tail_call 也一样：`bl helper` 之后还要 `pop {r7, pc}` 才能真正返回。
+
+## -O2：常量折叠先行
+
+``` asm
+000000a4 <main>:
+  a4:   2378            movs    r3, #120        @ 0x78
+  a6:   212b            movs    r1, #43 @ 0x2b
+  a8:   222c            movs    r2, #44 @ 0x2c
+  aa:   2000            movs    r0, #0
+  ac:   b082            sub     sp, #8
+  ae:   9301            str     r3, [sp, #4]
+  b0:   9301            str     r3, [sp, #4]
+  b2:   9101            str     r1, [sp, #4]
+  b4:   9201            str     r2, [sp, #4]
+  b6:   b002            add     sp, #8
+  b8:   4770            bx      lr
+  ba:   bf00            nop
+```
+
+这里出现了和上一节类似的“意外”：因为 main 里所有参数都是编译期常量，-O2 把四个函数全内联 + 常量折叠了——factorial(5)=120、tail_factorial(5,1)=120、tail_call(42)=43、non_tail_call(42)=44。最后 main 里只剩一串 movs/str。尾调用优化“做没做”已经看不出来了。
+
+## 拓展：让参数在编译期不可知
+
+要单独观察 TCO，就得让参数编译期不知道。把 helper 和两个调用者都标上 `noinline`，参数从一个 volatile 全局来：
+
+``` c
+volatile int gx;
+__attribute__((noinline)) int helper(int x) { return x + 1; }
+__attribute__((noinline)) int tail_call(int x) { return helper(x); }
+__attribute__((noinline)) int non_tail_call(int x) { int r = helper(x); return r + 1; }
+int main(void) { return tail_call(gx) + non_tail_call(gx); }
+```
+
+同样用 -O2 编，再看：
+
+``` asm
+000000a4 <helper>:
+  a4:   3001            adds    r0, #1
+  a6:   4770            bx      lr
+
+000000a8 <tail_call>:
+  a8:   f7ff bffc       b.w     a4 <helper>
+
+000000ac <non_tail_call>:
+  ac:   b508            push    {r3, lr}
+  ae:   f7ff fff9       bl      a4 <helper>
+  b2:   3001            adds    r0, #1
+  b4:   bd08            pop     {r3, pc}
+  b6:   bf00            nop
+```
+
+这下就清楚了：
+- **tail_call**：`b.w helper`——直接跳过去，不压栈、不碰 lr。因为 helper 返回后 tail_call 没有任何事要做，栈帧可以原地丢弃。
+- **non_tail_call**：`push {r3, lr}` … `bl helper` … `adds r0, #1` … `pop {r3, pc}`——它还得在返回值上加 1，所以必须先存 lr、老老实实走一次完整调用。
+
+这就是 TCO 的判断标准：**返回之后还有没有活干**。没有，就是 `b`；有，就必须 `bl` + 保存返回地址。
+
+# 死代码消除与内联
+
+``` c
+/*
+ * 观察目标: 死代码消除与 inline 效果
+ *
+ * 对比:
+ *   make 27-dead-code.elf              → -O0, 保留所有代码
+ *   make CFLAGS="-O2" 27-dead-code.elf → -O2, 消除无用代码
+ *
+ * 关注点:
+ *   1. 定义了但从未调用的函数 → -O2 下整个函数被移除
+ *   2. 计算结果从未使用的表达式 → 被消除
+ *   3. 条件永远为真的 if → 分支消除
+ *   4. inline 函数: 无调用开销但增加代码体积
+ */
+
+static int never_called(void) {
+    return 42;           /* -O2 下整个函数消失 */
+}
+
+static int dead_code(int x) {
+    volatile int a = x * x; /* 计算结果从未使用 → 加 volatile 阻止消除 */
+    (void)a;
+    int b = x + 1;
+    return b;            /* -O2: a 的计算仍被消除 */
+}
+
+static int dead_condition(int x) {
+    if (0)               /* 恒假, 整个分支被消除 */
+        return 100;
+    return x;
+}
+
+static inline int add_inline(int a, int b) {
+    return a + b;
+}
+
+int main(void) {
+    volatile int r;
+    r = dead_code(10);
+    r = dead_condition(20);
+    r = add_inline(3, 4);    /* -O2: 内联为 MOV + ADDS */
+    return 0;
+}
+```
+
+## -O0
+
+``` asm
+00000090 <never_called>:
+  90:   b480            push    {r7}
+  92:   af00            add     r7, sp, #0
+  94:   232a            movs    r3, #42 @ 0x2a
+  96:   4618            mov     r0, r3
+  98:   46bd            mov     sp, r7
+  9a:   bc80            pop     {r7}
+  9c:   4770            bx      lr
+
+0000009e <dead_code>:
+  9e:   b480            push    {r7}
+  a0:   b085            sub     sp, #20
+  a2:   af00            add     r7, sp, #0
+  a4:   6078            str     r0, [r7, #4]
+  a6:   687b            ldr     r3, [r7, #4]
+  a8:   fb03 f303       mul.w   r3, r3, r3
+  ac:   60bb            str     r3, [r7, #8]
+  ae:   68bb            ldr     r3, [r7, #8]
+  b0:   687b            ldr     r3, [r7, #4]
+  b2:   3301            adds    r3, #1
+  b4:   60fb            str     r3, [r7, #12]
+  b6:   68fb            ldr     r3, [r7, #12]
+  b8:   4618            mov     r0, r3
+  ba:   3714            adds    r7, #20
+  bc:   46bd            mov     sp, r7
+  be:   bc80            pop     {r7}
+  c0:   4770            bx      lr
+
+000000c2 <dead_condition>:
+  c2:   b480            push    {r7}
+  c4:   b083            sub     sp, #12
+  c6:   af00            add     r7, sp, #0
+  c8:   6078            str     r0, [r7, #4]
+  ca:   687b            ldr     r3, [r7, #4]
+  cc:   4618            mov     r0, r3
+  ce:   370c            adds    r7, #12
+  d0:   46bd            mov     sp, r7
+  d2:   bc80            pop     {r7}
+  d4:   4770            bx      lr
+
+000000d6 <add_inline>:
+  d6:   b480            push    {r7}
+  d8:   b083            sub     sp, #12
+  da:   af00            add     r7, sp, #0
+  dc:   6078            str     r0, [r7, #4]
+  de:   6039            str     r1, [r7, #0]
+  e0:   687a            ldr     r2, [r7, #4]
+  e2:   683b            ldr     r3, [r7, #0]
+  e4:   4413            add     r3, r2
+  e6:   4618            mov     r0, r3
+  e8:   370c            adds    r7, #12
+  ea:   46bd            mov     sp, r7
+  ec:   bc80            pop     {r7}
+  ee:   4770            bx      lr
+```
+
+-O0 下：never_called 明明从没人调用，照样编出来了；add_inline 虽然写了 `inline`，也还是编成一个独立函数（-O0 不内联）。
+
+两个有意思的地方：
+- **dead_code**：`volatile int a = x * x;` 后面 a 根本没被用，但 volatile 逼着编译器保留了这次 `mul.w` + `str`——否则这一整句都会被消掉。
+- **dead_condition**：`if (0) return 100;` 这种恒假分支，**连 -O0 都直接消掉了**——汇编里只剩 `return x`，没有 cmp、没有跳转。这说明“恒假条件消除”不走优化管线，在很早就做了。
+
+## -O2
+
+``` asm
+000000a4 <main>:
+  a4:   b410            push    {r4}
+  a6:   2464            movs    r4, #100        @ 0x64
+  a8:   210b            movs    r1, #11
+  aa:   2214            movs    r2, #20
+  ac:   2307            movs    r3, #7
+  ae:   2000            movs    r0, #0
+  b0:   b083            sub     sp, #12
+  b2:   9401            str     r4, [sp, #4]
+  b4:   9c01            ldr     r4, [sp, #4]
+  b6:   9100            str     r1, [sp, #0]
+  b8:   9200            str     r2, [sp, #0]
+  ba:   9300            str     r3, [sp, #0]
+  bc:   b003            add     sp, #12
+  be:   bc10            pop     {r4}
+  c0:   4770            bx      lr
+  c2:   bf00            nop
+```
+
+-O2 下除了 main，所有函数都消失了：
+- never_called 被整个删除；
+- dead_code / dead_condition / add_inline 全部内联 + 折叠成常量：main 里就是 `movs r4, #100`（x*x）、`movs r1, #11`（x+1）、`movs r2, #20`、`movs r3, #7`，然后往 volatile r 里存。
+
+整个 ELF 从 -O0 的 97 条指令缩到 -O2 的 50 条。这就是“死代码消除 + 内联 + 常量传播”叠在一起的威力：源码里那些函数名，在优化后的汇编里一个字都剩不下。
+
+顺带一提：在 -O2 的 main 里，每次 `str` 前面都先 `movs` 一个常量——看起来“多此一举”，其实是 volatile 强制的结果（它不能被合并成一次写）。
+# 指针强转与越界访问
+
+前面基本都在讲“规范的 C”。从这里开始往后，是常见 C 错误在 CPU 眼里的样子。头一个就是指针强转：`uint16_t*` 和 `uint32_t*` 互转，是很多隐蔽 bug 的温床。
+
+``` c
+/*
+ * 观察目标: 指针类型强转导致的对齐访问与 OOB
+ *
+ * 编译: make 30-pointer-cast.elf
+ * 反汇编: arm-none-eabi-objdump -d 30-pointer-cast.elf
+ * GDB:  make qemu-gdb-30-pointer-cast
+ *   在 GDB 中设断点观察每次 LDR 的地址
+ *
+ * 背景: uint16* → uint32* 强转是两个常见问题的温床
+ *
+ * 问题 1 - 对齐: uint16 数组按 2 字节对齐, 强转 uint32* 后如果从奇数
+ *                位置读取, 产生非对齐访问。Cortex-M3 默认不开启 UNALIGN_TRP
+ *                时支持非对齐 LDR, 但 LDREX/LDM 不支持, 性能也差。
+ *
+ * 问题 2 - OOB: 从 &arr[n-1] 处读 4 字节, 其中 2 字节越界。
+ *               汇编上只是 LDR from addr, CPU 不感知"越界"概念。
+ *
+ * 问题 3 - 严格别名: uint16* 和 uint32* 指向同一内存,
+ *               编译器假设它们不别名, 可能生成错误代码顺序。
+ */
+
+#include <stdint.h>
+
+static uint16_t arr16[4] = {0x0001, 0x0002, 0x0003, 0x0004};
+
+/* OOB: 指针强转导致的越界读 */
+static uint32_t oob_read(void) {
+    uint32_t *p32 = (uint32_t *)&arr16[3];  /* arr16[3] 还剩 2 字节 */
+    return *p32;  /* 读 4 字节: arr16[3] + 后面的 2 个未知字节 */
+}
+
+/* 对齐: 非对齐地址的 uint32 读取 */
+static uint32_t unaligned_read(void) {
+    uint8_t *base = (uint8_t *)arr16;
+    uint32_t *p32 = (uint32_t *)(base + 1);  /* 奇数地址 → 非对齐 */
+    return *p32;
+}
+
+/* 严格别名: 两个不同类型的指针指向同一块内存 */
+static uint32_t strict_alias_test(void) {
+    uint32_t val = 0x12345678;
+    uint16_t *p16 = (uint16_t *)&val;
+    uint32_t a = p16[0];             /* 低 16 位 */
+    uint32_t b = p16[1];             /* 高 16 位 */
+    return a + b;
+}
+
+int main(void) {
+    volatile uint32_t r;
+    r = oob_read();
+    r = unaligned_read();
+    r = strict_alias_test();
+    return 0;
+}
+```
+
+## 越界读取
+
+``` asm
+00000090 <oob_read>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   4b04            ldr     r3, [pc, #16]   @ (a8 <oob_read+0x18>)
+  98:   607b            str     r3, [r7, #4]
+  9a:   687b            ldr     r3, [r7, #4]
+  9c:   681b            ldr     r3, [r3, #0]
+  9e:   4618            mov     r0, r3
+  a0:   370c            adds    r7, #12
+  a2:   46bd            mov     sp, r7
+  a4:   bc80            pop     {r7}
+  a6:   4770            bx      lr
+  a8:   20000006        .word   0x20000006
+```
+
+oob_read 拿的是 `&arr16[3]`（arr16 只有 4 个 uint16），然后当 uint32 读 4 字节。汇编上，先 `ldr r3, [pc, #16]` 取个字面量——对应 `&arr16[3]` 的地址 0x20000006，然后 `ldr r3, [r3, #0]`，一条普通的 4 字节读。
+
+CPU 完全不知道“这里只剩 2 字节了”，它只会照做：把这一格和后面那一格一起读进来。所谓“越界”，是 C 语言层面的概念，指令集里并不存在——对 CPU 来说，就是从一个对齐或没对齐的地址读 4 字节而已。
+
+## 非对齐读取
+
+``` asm
+000000ac <unaligned_read>:
+  ac:   b480            push    {r7}
+  ae:   b083            sub     sp, #12
+  b0:   af00            add     r7, sp, #0
+  b2:   4b06            ldr     r3, [pc, #24]   @ (cc <unaligned_read+0x20>)
+  b4:   607b            str     r3, [r7, #4]
+  b6:   687b            ldr     r3, [r7, #4]
+  b8:   3301            adds    r3, #1
+  ba:   603b            str     r3, [r7, #0]
+  bc:   683b            ldr     r3, [r7, #0]
+  be:   681b            ldr     r3, [r3, #0]
+  c0:   4618            mov     r0, r3
+  c2:   370c            adds    r7, #12
+  c4:   46bd            mov     sp, r7
+  c6:   bc80            pop     {r7}
+  c8:   4770            bx      lr
+  ca:   bf00            nop
+  cc:   20000000        .word   0x20000000
+```
+
+`base + 1` 得到一个奇数地址，再当 uint32 读，同样只是一条 `ldr`。Cortex-M3 在默认配置（CCR.UNALIGN_TRP = 0）下允许普通 LDR/STR 做非对齐访问，所以这里不会炸，只是慢——硬件要把一次非对齐访问拆成两次总线访问。但如果程序里开了 `SCB->CCR |= SCB_CCR_UNALIGN_TRP_Msk`，同样的代码就会触发 UsageFault。
+
+## 严格别名（-O0 版）
+
+``` asm
+000000d0 <strict_alias_test>:
+  d0:   b480            push    {r7}
+  d2:   b085            sub     sp, #20
+  d4:   af00            add     r7, sp, #0
+  d6:   4b09            ldr     r3, [pc, #36]   @ (fc <strict_alias_test+0x2c>)
+  d8:   603b            str     r3, [r7, #0]
+  da:   463b            mov     r3, r7
+  dc:   60fb            str     r3, [r7, #12]
+  de:   68fb            ldr     r3, [r7, #12]
+  e0:   881b            ldrh    r3, [r3, #0]
+  e2:   60bb            str     r3, [r7, #8]
+  e4:   68fb            ldr     r3, [r7, #12]
+  e6:   3302            adds    r3, #2
+  e8:   881b            ldrh    r3, [r3, #0]
+  ea:   607b            str     r3, [r7, #4]
+  ec:   68ba            ldr     r2, [r7, #8]
+  ee:   687b            ldr     r3, [r7, #4]
+  f0:   4413            add     r3, r2
+  f2:   4618            mov     r0, r3
+  f4:   3714            adds    r7, #20
+  f6:   46bd            mov     sp, r7
+  f8:   bc80            pop     {r7}
+  fa:   4770            bx      lr
+  fc:   12345678        .word   0x12345678
+```
+
+把 `uint32_t*` 当 `uint16_t*` 用，读低 16 位和高 16 位，汇编里就是两次 `ldrh`（`ldrh r3, [r3, #0]` 和 `ldrh r3, [r3, #2]`）。在 -O0 下这么写没问题。但一旦开优化，这就撞上严格别名规则了——见下一个实验。
+
+# 严格别名违规
+
+严格别名规则说：不同类型（char 除外）的指针不会指向同一块内存。编译器会拿这条规则当“承诺”，据此优化。这个实验就是把承诺打破，看会怎样。
+
+``` c
+/*
+ * 观察目标: 严格别名违规 —— 编译器基于"不别名假设"生成错误代码
+ *
+ * 编译: make 31-strict-aliasing.elf
+ * 对比: make CFLAGS="-O2 -fno-strict-aliasing" 31-strict-aliasing.elf
+ *       make CFLAGS="-O2" 31-strict-aliasing.elf
+ *
+ * 关注点:
+ *   1. C 标准要求不同类型指针不指向同一内存 (char* 除外)
+ *   2. 编译器利用此假设优化: 认为 *pi 和 *ps 不会互相影响
+ *   3. -O2 下, 如果违反规则, 读到的值可能不符合预期
+ *   4. -fno-strict-aliasing 关闭此优化, 结果正确但性能降低
+ *   5. 经典体现: uint16_t* 和 uint32_t* 指向同一地址
+ */
+
+#include <stdint.h>
+
+static uint32_t strict_alias_violation(uint32_t *pi, uint16_t *ps) {
+    *pi = 0x12345678;
+    *ps = 0xAAAA;       /* 编译器认为 ps 和 pi 不别名, 重排后可能先执行 */
+    return *pi;          /* 预期 0x1234AAAA, 但可能直接返回 0x12345678 */
+}
+
+static uint32_t safe_via_char(uint32_t *pi, uint16_t *ps) {
+    /* 通过 char* 做类型双关是合法的 */
+    *pi = 0x12345678;
+    char *pc = (char *)pi;
+    pc[0] = 0xAA; pc[1] = 0xAA;
+    return *pi;
+}
+
+int main(void) {
+    uint32_t val = 0;
+    volatile uint32_t r;
+
+    r = strict_alias_violation(&val, (uint16_t *)&val);
+    r = safe_via_char(&val, (uint16_t *)&val);
+    return 0;
+}
+```
+
+``` bash
+make CFLAGS="-O2 -mthumb -mcpu=cortex-m3 -ffreestanding" 31-strict-aliasing.elf
+make CFLAGS="-O2 -fno-strict-aliasing -mthumb -mcpu=cortex-m3 -ffreestanding" 31-strict-aliasing.elf
+```
+
+## -O2
+
+``` asm
+000000a4 <main>:
+  a4:   2000            movs    r0, #0
+  a6:   4a03            ldr     r2, [pc, #12]   @ (b4 <main+0x10>)
+  a8:   4b03            ldr     r3, [pc, #12]   @ (b8 <main+0x14>)
+  aa:   b082            sub     sp, #8
+  ac:   9201            str     r2, [sp, #4]
+  ae:   9301            str     r3, [sp, #4]
+  b0:   b002            add     sp, #8
+  b2:   4770            bx      lr
+  b4:   12345678        .word   0x12345678
+  b8:   1234aaaa        .word   0x1234aaaa
+```
+
+-O2 把两个函数都内联进了 main，最后只剩两条常量：`0x12345678` 和 `0x1234aaaa`，按顺序写进 volatile r。对照源码：
+- `strict_alias_violation(&val, (uint16_t*)&val)`：先 `*pi = 0x12345678`，再 `*ps = 0xAAAA`，然后 `return *pi`。按内存直觉，第二次写会把低 16 位改成 0xAAAA，应该返回 0x1234AAAA。但编译器依据“pi 和 ps 不别名”的假设，认为 `*ps` 的写不会影响 `*pi`，于是把 `return *pi` **直接折叠成了刚才写进去的 0x12345678**——读到了过期值。汇编里就是第一条 `str` 写的那个 0x12345678。
+- `safe_via_char(&val, (uint16_t*)&val)`：用 char* 逐字节改，char 是严格别名规则的例外，编译器不敢乱来，老老实实返回了正确的 0x1234AAAA（第二条 `str` 的值）。
+
+所以同一个 main 里，两次“目的一样”的操作，一次拿到 0x12345678（错的），一次拿到 0x1234AAAA（对的）。
+
+## -O2 -fno-strict-aliasing
+
+``` asm
+000000a4 <main>:
+  a4:   2000            movs    r0, #0
+  a6:   4b03            ldr     r3, [pc, #12]   @ (b4 <main+0x10>)
+  a8:   b082            sub     sp, #8
+  aa:   9301            str     r3, [sp, #4]
+  ac:   9301            str     r3, [sp, #4]
+  ae:   b002            add     sp, #8
+  b0:   4770            bx      lr
+  b2:   bf00            nop
+  b4:   1234aaaa        .word   0x1234aaaa
+```
+
+关掉严格别名假设后，编译器必须假设两次写可能互相影响，于是两处都变成 0x1234AAAA：字面量池里只剩一个 `0x1234aaaa`，两条 `str` 写的是同一个寄存器。结果正确了，代价是丢掉了优化机会——这就是严格别名规则“两头都得罪”的地方。
+
+工程里最常见的踩法不是手写类型双关，而是“用 uint16_t* 和 uint32_t* 访问同一块协议缓冲区 / 硬件寄存器映射”。一旦编译器和代码对“谁跟谁别名”的理解不一致，就会冒出这种极难查的错。
+
+# 整数溢出与回绕
+
+C 里无符号溢出是明确定义的（模 2^N 回绕），有符号溢出却是未定义行为。CPU 不管这一套——它只是做二进制加法，顺手把标志位摆好。这一节看看两种溢出在汇编上长什么样。
+
+``` c
+/*
+ * 观察目标: 整数溢出与回绕 —— CPU 自检测但 C 标准不保证
+ *
+ * 编译: make 32-integer-overflow.elf
+ * 反汇编: arm-none-eabi-objdump -d 32-integer-overflow.elf
+ *
+ * 关注点:
+ *   1. INT_MAX + 1: ADDS 运算, 结果回绕到 INT_MIN (二进制: 0x7FFFFFFF+1 = 0x80000000)
+ *   2. 无符号回绕是 C 标准定义行为 (UINT_MAX + 1 = 0)
+ *   3. 有符号溢出是 C 未定义行为 (编译器可假设不发生)
+ *   4. APSR 寄存器中的 V/C flag 由 ADDS/SUBS 设置, 但 C 不检查它
+ *   5. __aeabi_idiv 内部会做溢出检查
+ */
+
+#include <limits.h>
+
+static int signed_overflow(void) {
+    int a = INT_MAX;
+    return a + 1;        /* 回绕: 0x80000000 即 INT_MIN */
+}
+
+static unsigned int unsigned_wrap(void) {
+    unsigned int u = 0;
+    return u - 1;        /* 回绕: 0xFFFFFFFF 即 UINT_MAX */
+}
+
+static int overflow_in_loop(void) {
+    /* 经典错误: 有符号 i 可能溢出 */
+    int i;
+    for (i = 0; i >= 0; i++)
+        if (i == INT_MAX) break;
+    return i;            /* i = INT_MAX → i++ → 溢出 */
+}
+
+static int detect_overflow(void) {
+    int a = INT_MAX;
+    int b = 1;
+    int result = a + b;
+    /* 检查 V flag 理论上可行, 但 C 无法直接获取 */
+    return result;
+}
+
+int main(void) {
+    volatile int r;
+    r = signed_overflow();
+    r = unsigned_wrap();
+    r = overflow_in_loop();
+    r = detect_overflow();
+    return 0;
+}
+```
+
+## 有符号溢出
+
+``` asm
+00000090 <signed_overflow>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   f06f 4300       mvn.w   r3, #2147483648 @ 0x80000000
+  9a:   607b            str     r3, [r7, #4]
+  9c:   687b            ldr     r3, [r7, #4]
+  9e:   3301            adds    r3, #1
+  a0:   4618            mov     r0, r3
+  a2:   370c            adds    r7, #12
+  a4:   46bd            mov     sp, r7
+  a6:   bc80            pop     {r7}
+  a8:   4770            bx      lr
+
+000000aa <unsigned_wrap>:
+  aa:   b480            push    {r7}
+  ac:   b083            sub     sp, #12
+  ae:   af00            add     r7, sp, #0
+  b0:   2300            movs    r3, #0
+  b2:   607b            str     r3, [r7, #4]
+  b4:   687b            ldr     r3, [r7, #4]
+  b6:   3b01            subs    r3, #1
+  b8:   4618            mov     r0, r3
+  ba:   370c            adds    r7, #12
+  bc:   46bd            mov     sp, r7
+  be:   bc80            pop     {r7}
+  c0:   4770            bx      lr
+```
+
+`int a = INT_MAX; return a + 1;` 编译出来是：`mvn.w r3, #0x80000000`（这个花招得到 0x7FFFFFFF = INT_MAX），然后 `adds r3, #1`。就这么一条 `adds`——它会算出 0x80000000，并把 APSR 的 V（溢出）标志置 1，但 C 代码根本不看标志位，直接把它当 int 返回了（也就是 INT_MIN）。
+
+所以“溢出”在 CPU 层不是异常，只是一次普通加法外加一个没人理会的标志位。有符号溢出之所以危险，恰恰是因为编译器有权假设它“不会发生”，从而做出各种出乎意料的优化。
+
+对比 `unsigned u = 0; return u - 1;`：`subs r3, #1`，得到 0xFFFFFFFF。无符号回绕是 C 标准保证的，这段代码完全合法、可移植。两边生成的指令一模一样，区别只在“C 标准是否背书”。
+
+## 循环里的溢出
+
+``` asm
+000000c2 <overflow_in_loop>:
+  c2:   b480            push    {r7}
+  c4:   b083            sub     sp, #12
+  c6:   af00            add     r7, sp, #0
+  c8:   2300            movs    r3, #0
+  ca:   607b            str     r3, [r7, #4]
+  cc:   e007            b.n     de <overflow_in_loop+0x1c>
+  ce:   687b            ldr     r3, [r7, #4]
+  d0:   f06f 4200       mvn.w   r2, #2147483648 @ 0x80000000
+  d4:   4293            cmp     r3, r2
+  d6:   d006            beq.n   e6 <overflow_in_loop+0x24>
+  d8:   687b            ldr     r3, [r7, #4]
+  da:   3301            adds    r3, #1
+  dc:   607b            str     r3, [r7, #4]
+  de:   687b            ldr     r3, [r7, #4]
+  e0:   2b00            cmp     r3, #0
+  e2:   daf4            bge.n   ce <overflow_in_loop+0xc>
+  e4:   e000            b.n     e8 <overflow_in_loop+0x26>
+  e6:   bf00            nop
+  e8:   687b            ldr     r3, [r7, #4]
+  ea:   4618            mov     r0, r3
+  ec:   370c            adds    r7, #12
+  ee:   46bd            mov     sp, r7
+  f0:   bc80            pop     {r7}
+  f2:   4770            bx      lr
+
+000000f4 <detect_overflow>:
+  f4:   b480            push    {r7}
+  f6:   b085            sub     sp, #20
+  f8:   af00            add     r7, sp, #0
+  fa:   f06f 4300       mvn.w   r3, #2147483648 @ 0x80000000
+  fe:   60fb            str     r3, [r7, #12]
+ 100:   2301            movs    r3, #1
+ 102:   60bb            str     r3, [r7, #8]
+ 104:   68fa            ldr     r2, [r7, #12]
+ 106:   68bb            ldr     r3, [r7, #8]
+ 108:   4413            add     r3, r2
+ 10a:   607b            str     r3, [r7, #4]
+ 10c:   687b            ldr     r3, [r7, #4]
+ 10e:   4618            mov     r0, r3
+ 110:   3714            adds    r7, #20
+ 112:   46bd            mov     sp, r7
+ 114:   bc80            pop     {r7}
+ 116:   4770            bx      lr
+```
+
+overflow_in_loop 里那句 `if (i == INT_MAX) break;` 确实起了作用，汇编里能清楚地看到：`cmp r3, #0; bge` 是循环条件（有符号比较），循环体内又用 `mvn.w r2, #0x80000000; cmp r3, r2; beq` 判断是否到达 INT_MAX 并跳出。也就是说这个循环被显式保护住了，不会真溢出；把 break 那句删掉，`i++` 才会从 INT_MAX 回绕成 INT_MIN 然后继续。
+
+detect_overflow 同样只是一条 `adds`。源码注释说“理论上可以查 V 标志，但 C 无法直接获取”——确实如此，标准 C 里没有访问 APSR 的手段。真要在 C 层检测加法溢出，只能写成 `if (a > INT_MAX - b)` 这种不看标志位的代数判断。
+
+## 小结
+
+- 无符号回绕：定义行为，`adds/subs` 照常算。
+- 有符号溢出：CPU 也只是算，V 标志悄悄置位，但 C 层拿不到、也不检查；编译器还会趁机做优化。
+# 有符号与无符号比较
+
+`-1 > 5u` 为什么是 true？因为比较时 int 被转成了 unsigned：-1 变成 0xFFFFFFFF，当然比 5 大。这一节看编译器怎么用条件码把这种差异体现出来。
+
+``` c
+/*
+ * 观察目标: 有符号 vs 无符号比较的陷阱
+ *
+ * 编译: make 33-signed-compare.elf
+ * 反汇编: arm-none-eabi-objdump -d 33-signed-compare.elf
+ *
+ * 关注点:
+ *   1. 有符号比较: CMP + BGT/BLT/BGE/BLE (有符号条件)
+ *   2. 无符号比较: CMP + BHI/BLO/BHS/BLS (无符号条件)
+ *   3. 混用时: int i vs unsigned int len → 隐式类型转换, i 变成无符号
+ *   4. 经典 bug: for (i = 0; i < len; i++) 当 len 为 unsigned 且 i 为 signed
+ *      → 无符号比较, 正常工作。但 if (i < len) 中 i=-1 时, -1 变成 0xFFFFFFFF
+ */
+
+static int signed_compare(int a, int b) {
+    if (a > b) return 1;
+    return -1;
+}
+
+static int unsigned_compare(unsigned int a, unsigned int b) {
+    if (a > b) return 1;
+    return -1;
+}
+
+static int mixed_compare(int a, unsigned int b) {
+    /* a 被隐式转换为 unsigned int */
+    if (a > b) return 1;    /* a=-1 → 0xFFFFFFFF > b, 永远为真! */
+    return -1;
+}
+
+static int classic_bug(void) {
+    unsigned int len = 5;
+    int i;
+    /* 经典 bug: for 倒序遍历 */
+    for (i = len - 2; i < len; i--) {
+        if (i < 0)          /* i 被转成 unsigned, 永不 < 0 */
+            break;
+    }
+    return i;
+}
+
+int main(void) {
+    volatile int r;
+    r = signed_compare(10, 20);
+    r = unsigned_compare(10, 20);
+    r = mixed_compare(-1, 5);
+    r = classic_bug();
+    return 0;
+}
+```
+
+## 有符号比较
+
+``` asm
+00000090 <signed_compare>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   6078            str     r0, [r7, #4]
+  98:   6039            str     r1, [r7, #0]
+  9a:   687a            ldr     r2, [r7, #4]
+  9c:   683b            ldr     r3, [r7, #0]
+  9e:   429a            cmp     r2, r3
+  a0:   dd01            ble.n   a6 <signed_compare+0x16>
+  a2:   2301            movs    r3, #1
+  a4:   e001            b.n     aa <signed_compare+0x1a>
+  a6:   f04f 33ff       mov.w   r3, #4294967295 @ 0xffffffff
+  aa:   4618            mov     r0, r3
+  ac:   370c            adds    r7, #12
+  ae:   46bd            mov     sp, r7
+  b0:   bc80            pop     {r7}
+  b2:   4770            bx      lr
+```
+
+`signed_compare(a, b)` 的 `if (a > b) return 1; return -1;` 编译成 `cmp r2, r3; ble`（ble = 有符号“小于等于”）。有符号比较用 blt/ble/bgt/bge 这一组条件码。
+
+## 无符号比较
+
+``` asm
+000000b4 <unsigned_compare>:
+  b4:   b480            push    {r7}
+  b6:   b083            sub     sp, #12
+  b8:   af00            add     r7, sp, #0
+  ba:   6078            str     r0, [r7, #4]
+  bc:   6039            str     r1, [r7, #0]
+  be:   687a            ldr     r2, [r7, #4]
+  c0:   683b            ldr     r3, [r7, #0]
+  c2:   429a            cmp     r2, r3
+  c4:   d901            bls.n   ca <unsigned_compare+0x16>
+  c6:   2301            movs    r3, #1
+  c8:   e001            b.n     ce <unsigned_compare+0x1a>
+  ca:   f04f 33ff       mov.w   r3, #4294967295 @ 0xffffffff
+  ce:   4618            mov     r0, r3
+  d0:   370c            adds    r7, #12
+  d2:   46bd            mov     sp, r7
+  d4:   bc80            pop     {r7}
+  d6:   4770            bx      lr
+```
+
+一模一样的写法，参数换成 unsigned 之后条件码变成 `bls`（无符号“小于等于”）。所以有符号和无符号的差别，在汇编层就是**选了哪一组条件码**。
+
+## 混合比较的陷阱
+
+``` asm
+000000d8 <mixed_compare>:
+  d8:   b480            push    {r7}
+  da:   b083            sub     sp, #12
+  dc:   af00            add     r7, sp, #0
+  de:   6078            str     r0, [r7, #4]
+  e0:   6039            str     r1, [r7, #0]
+  e2:   687b            ldr     r3, [r7, #4]
+  e4:   683a            ldr     r2, [r7, #0]
+  e6:   429a            cmp     r2, r3
+  e8:   d201            bcs.n   ee <mixed_compare+0x16>
+  ea:   2301            movs    r3, #1
+  ec:   e001            b.n     f2 <mixed_compare+0x1a>
+  ee:   f04f 33ff       mov.w   r3, #4294967295 @ 0xffffffff
+  f2:   4618            mov     r0, r3
+  f4:   370c            adds    r7, #12
+  f6:   46bd            mov     sp, r7
+  f8:   bc80            pop     {r7}
+  fa:   4770            bx      lr
+```
+
+`mixed_compare(int a, unsigned b)` 里的 `a > b`：因为一边是 unsigned，a 被隐式转成 unsigned，比较随之变成无符号的。汇编里是 `cmp r2, r3; bcs`（bcs = 无符号“大于等于”），而且操作数顺序被调了一下（`cmp b, a`，然后判断“b >= a”）。
+
+后果就是：调用 `mixed_compare(-1, 5)`，-1 变成 0xFFFFFFFF，永远返回 1。这就是“有符号量悄悄变成无符号量”的经典坑——它不会报警告，只会在某个边界值上悄悄给你错误答案。
+
+## 那个经典 bug
+
+``` asm
+000000fc <classic_bug>:
+  fc:   b480            push    {r7}
+  fe:   b083            sub     sp, #12
+ 100:   af00            add     r7, sp, #0
+ 102:   2305            movs    r3, #5
+ 104:   603b            str     r3, [r7, #0]
+ 106:   683b            ldr     r3, [r7, #0]
+ 108:   3b02            subs    r3, #2
+ 10a:   607b            str     r3, [r7, #4]
+ 10c:   e005            b.n     11a <classic_bug+0x1e>
+ 10e:   687b            ldr     r3, [r7, #4]
+ 110:   2b00            cmp     r3, #0
+ 112:   db07            blt.n   124 <classic_bug+0x28>
+ 114:   687b            ldr     r3, [r7, #4]
+ 116:   3b01            subs    r3, #1
+ 118:   607b            str     r3, [r7, #4]
+ 11a:   687b            ldr     r3, [r7, #4]
+ 11c:   683a            ldr     r2, [r7, #0]
+ 11e:   429a            cmp     r2, r3
+ 120:   d8f5            bhi.n   10e <classic_bug+0x12>
+ 122:   e000            b.n     126 <classic_bug+0x2a>
+ 124:   bf00            nop
+ 126:   687b            ldr     r3, [r7, #4]
+ 128:   4618            mov     r0, r3
+ 12a:   370c            adds    r7, #12
+ 12c:   46bd            mov     sp, r7
+ 12e:   bc80            pop     {r7}
+ 130:   4770            bx      lr
+```
+
+源码想演示的是 `for (i = len - 2; i < len; i--)` 这种倒序循环：i 是 int、len 是 unsigned，比较会被转成无符号，汇编里循环条件确实是无符号的（`cmp r2, r3; bhi`，即 `len > (unsigned)i`）。
+
+不过实际跑下来这个循环**会正常退出**：i 从 3 一路减到 0，再减到 -1 时，无符号比较 `5 > 0xFFFFFFFF` 为假，循环结束，返回 -1——方向恰好对了。源码注释里担心的 `if (i < 0)` 也确实是有效的：两个操作数都是 int，编译成了有符号的 `cmp r3, #0; blt`。
+
+真正经典的死循环写法是 `for (unsigned i = n; i >= 0; i--)`（i 无符号，`i >= 0` 恒真），或者循环变量的符号和增减方向不匹配的那些变体。判据很简单：**先看比较用了哪组条件码，再看循环变量是什么符号**。
+
+# 空指针解引用
+
+空指针解引用在 CPU 层是什么？不是“异常”，就是一条地址为 0 的 LDR 或 STR。会不会炸、炸成什么样，取决于地址 0 那块内存是什么属性。这个实验正好能看出“读”和“写”的不对称。
+
+``` c
+/*
+ * 观察目标: 空指针解引用 —— CPU 层面发生了什么
+ *
+ * 编译: make 34-null-ptr.elf
+ * QEMU: make qemu-gdb-34-null-ptr
+ *   另一个终端: gdb-multiarch -q -ex "target remote :1234" 34-null-ptr.elf
+ *   在 GDB: continue → 观察触发哪个异常
+ *
+ * 关注点:
+ *   1. 空指针读: LDR R0, [R0, #0] 从地址 0 读取
+ *   2. 空指针写: STR R0, [R1, #0] 写入地址 0
+ *   3. Cortex-M3 的 0 地址是向量表 (FLASH), 读可能成功但意义不对
+ *   4. 写 0 地址 → BusFault 或 HardFault
+ *   5. 在 QEMU 中会触发异常, 观察 Default_Handler 死循环
+ */
+
+static int null_read(void) {
+    volatile int *p = (int *)0;
+    return *p;               /* LDR from 0x00000000 → 读取向量表第一项 (MSP) */
+}
+
+static void null_write(void) {
+    volatile int *p = (int *)0;
+    *p = 0xDEAD;             /* STR to 0x00000000 → 写 FLASH 区域 → BusFault */
+}
+
+static int null_arithmetic(void) {
+    int *p = 0;
+    return p[10];            /* LDR from 0x00000028 → 读取另一个向量表项 */
+}
+
+int main(void) {
+    volatile int r;
+
+    /* 逐一取消注释观察不同的行为 */
+    r = null_read();
+    /* null_write(); */      /* 会触发 HardFault */
+    /* r = null_arithmetic(); */
+
+    return 0;
+}
+```
+
+## 空指针读
+
+``` asm
+00000090 <null_read>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   2300            movs    r3, #0
+  98:   607b            str     r3, [r7, #4]
+  9a:   687b            ldr     r3, [r7, #4]
+  9c:   681b            ldr     r3, [r3, #0]
+  9e:   4618            mov     r0, r3
+  a0:   370c            adds    r7, #12
+  a2:   46bd            mov     sp, r7
+  a4:   bc80            pop     {r7}
+  a6:   4770            bx      lr
+
+000000c4 <null_arithmetic>:
+  c4:   b480            push    {r7}
+  c6:   b083            sub     sp, #12
+  c8:   af00            add     r7, sp, #0
+  ca:   2300            movs    r3, #0
+  cc:   607b            str     r3, [r7, #4]
+  ce:   687b            ldr     r3, [r7, #4]
+  d0:   6a9b            ldr     r3, [r3, #40]   @ 0x28
+  d2:   4618            mov     r0, r3
+  d4:   370c            adds    r7, #12
+  d6:   46bd            mov     sp, r7
+  d8:   bc80            pop     {r7}
+  da:   4770            bx      lr
+
+000000a8 <null_write>:
+  a8:   b480            push    {r7}
+  aa:   b083            sub     sp, #12
+  ac:   af00            add     r7, sp, #0
+  ae:   2300            movs    r3, #0
+  b0:   607b            str     r3, [r7, #4]
+  b2:   687b            ldr     r3, [r7, #4]
+  b4:   f64d 62ad       movw    r2, #57005      @ 0xdead
+  b8:   601a            str     r2, [r3, #0]
+  ba:   bf00            nop
+  bc:   370c            adds    r7, #12
+  be:   46bd            mov     sp, r7
+  c0:   bc80            pop     {r7}
+  c2:   4770            bx      lr
+```
+
+`null_read`：`movs r3, #0` 把 0 存进 p，然后 `ldr r3, [r3, #0]`——从地址 0 读 4 字节。在链接脚本里地址 0 是 FLASH，放着向量表，所以这个读不会炸，读到的是向量表第一项。用 GDB 瞄一眼：
+
+``` bash
+(gdb) print/x null_read()
+$1 = 0x20010000
+(gdb) x/4xw 0x0
+0x0 <vector_table>:    0x20010000    0x00000041    0x00000089    0x00000089
+```
+
+0x20010000 是初始 MSP（向量表第 0 项，复位后装进 SP 的值），0x41 是 Reset_Handler 的地址（0x40 | 1，Thumb 位）。null_read “成功”了——但它读到的完全不是任何有用的东西。
+
+`null_arithmetic` 的 `p[10]` 则是 `ldr r3, [r3, #40]`，从 0x28 读，也就是向量表第 10 项——我们没填过，是 0。
+
+## 空指针写
+
+`null_write` 是 `str r2, [r3, #0]`，往地址 0 写 0xDEAD。源码注释预期“触发 BusFault/HardFault”，但实际在 QEMU 上**没有**：地址 0 在 QEMU 的 lm3s6965evb 模型里是一块 256KB 的 **rom** 区域（`monitor info mtree` 能看到 `stellaris.flash`），对 rom 的写入被静默丢弃。
+
+把 null_write 打开（等价于取消源码里那行注释）再跑一遍：
+
+``` bash
+(gdb) break *0x88          # Default_Handler(硬故障入口)
+(gdb) break *0xee          # null_write 之后的下一句
+(gdb) continue
+Breakpoint 2, main () at 34-fault.c:40
+40        return 0;
+(gdb) x/4xw 0x0
+0x0 <vector_table>:    0x20010000    0x00000041    0x00000089    0x00000089
+(gdb) printf "CFSR = %#x\n", *(unsigned int*)0xE000ED28
+CFSR = 0
+```
+
+停下来的是 `0xee`（null_write 之后），不是 `0x88`（故障入口）；内存一个字都没变，CFSR（可配置故障状态寄存器）也是 0——确实没发生任何故障。
+
+所以这个实验给出两条结论：
+- **读**空指针：地址 0 是可读的 FLASH，不炸，但读到的是向量表，语义完全错。
+- **写**空指针：在 QEMU 这块板子上被无声丢弃。真实芯片的行为取决于 flash 控制器——有的直接丢弃写入，有的触发 BusFault，不能一概而论。想稳稳拿到一个 HardFault，得让地址落在真正未映射、且会报错的空间，或者用 MPU 把只读区域配成“访问即 fault”。
+
+“解引用空指针会触发异常”是被过度简化的说法。CPU 只认地址和那个地址的属性：读一块合法的只读区可能毫无反应地读出错数据，写一块只读区可能被丢弃、也可能 fault。真正能指望的，是**语义一定错**。
+# 栈缓冲区溢出
+
+这个实验本想演示“越界写覆盖返回地址，函数返回时 `pop {pc}` 跳飞”。但真跑起来，会先撞上一个更基础、也更生动的教训。
+
+``` c
+/*
+ * 观察目标: 栈缓冲区溢出 —— 返回地址被篡改
+ *
+ * 编译: make 35-stack-overflow.elf
+ * GDB:  make qemu-gdb-35-stack-overflow
+ *   在 GDB: break main; continue; stepi... 观察 SP 和栈上数据
+ *
+ * 关注点:
+ *   1. 局部数组越界写入 → 覆盖相邻栈上的内容
+ *   2. 函数返回时 POP {PC} 加载被篡改的返回地址 → 跳转到意外位置
+ *   3. 递归深度过大 → SP 递减超过 SRAM 范围 → 访问无效内存
+ *   4. Cortex-M3 有 MPU 可检测栈溢出, 但默认未启用
+ */
+
+static int buffer_overflow(void) {
+    int arr[4];
+    int secret = 0x12345678;
+
+    /* arr[4], arr[5], ... 越界写入 → 覆盖 secret 和返回地址 */
+    for (int i = 0; i <= 8; i++)
+        arr[i] = 0xAAAAAAAA;
+
+    return secret;     /* 可能已被覆盖为 0xAAAAAAAA */
+}
+
+static int recursive_overflow(int depth) {
+    int buf[64];       /* 每层递归 256 字节栈 */
+    buf[0] = depth;
+    if (depth == 0)
+        return 0;
+    return recursive_overflow(depth - 1) + buf[0];
+}
+
+int main(void) {
+    volatile int r;
+    r = buffer_overflow();          /* 观察返回值和返回地址 */
+    /* r = recursive_overflow(200); */   /* 取消注释观察栈溢出 HardFault */
+    return 0;
+}
+```
+
+先看 -O0 的汇编：
+
+``` asm
+00000090 <buffer_overflow>:
+  90:   b480            push    {r7}
+  92:   b087            sub     sp, #28
+  94:   af00            add     r7, sp, #0
+  96:   4b0c            ldr     r3, [pc, #48]   @ (c8 <buffer_overflow+0x38>)
+  98:   613b            str     r3, [r7, #16]
+  9a:   2300            movs    r3, #0
+  9c:   617b            str     r3, [r7, #20]
+  9e:   e00a            b.n     b6 <buffer_overflow+0x26>
+  a0:   697b            ldr     r3, [r7, #20]
+  a2:   009b            lsls    r3, r3, #2
+  a4:   3318            adds    r3, #24
+  a6:   443b            add     r3, r7
+  a8:   f04f 32aa       mov.w   r2, #2863311530 @ 0xaaaaaaaa
+  ac:   f843 2c18       str.w   r2, [r3, #-24]
+  b0:   697b            ldr     r3, [r7, #20]
+  b2:   3301            adds    r3, #1
+  b4:   617b            str     r3, [r7, #20]
+  b6:   697b            ldr     r3, [r7, #20]
+  b8:   2b08            cmp     r3, #8
+  ba:   ddf1            ble.n   a0 <buffer_overflow+0x10>
+  bc:   693b            ldr     r3, [r7, #16]
+  be:   4618            mov     r0, r3
+  c0:   371c            adds    r7, #28
+  c2:   46bd            mov     sp, r7
+  c4:   bc80            pop     {r7}
+  c6:   4770            bx      lr
+  c8:   12345678        .word   0x12345678
+
+000000cc <recursive_overflow>:
+  cc:   b580            push    {r7, lr}
+  ce:   b0c2            sub     sp, #264        @ 0x108
+  d0:   af00            add     r7, sp, #0
+  d2:   f507 7384       add.w   r3, r7, #264    @ 0x108
+  d6:   f5a3 7382       sub.w   r3, r3, #260    @ 0x104
+  da:   6018            str     r0, [r3, #0]
+  dc:   f507 7384       add.w   r3, r7, #264    @ 0x108
+  e0:   f5a3 7380       sub.w   r3, r3, #256    @ 0x100
+  e4:   f507 7284       add.w   r2, r7, #264    @ 0x108
+  e8:   f5a2 7282       sub.w   r2, r2, #260    @ 0x104
+  ec:   6812            ldr     r2, [r2, #0]
+  ee:   601a            str     r2, [r3, #0]
+  f0:   f507 7384       add.w   r3, r7, #264    @ 0x108
+  f4:   f5a3 7382       sub.w   r3, r3, #260    @ 0x104
+  f8:   681b            ldr     r3, [r3, #0]
+  fa:   2b00            cmp     r3, #0
+  fc:   d101            bne.n   102 <recursive_overflow+0x36>
+  fe:   2300            movs    r3, #0
+ 100:   e00f            b.n     122 <recursive_overflow+0x56>
+ 102:   f507 7384       add.w   r3, r7, #264    @ 0x108
+ 106:   f5a3 7382       sub.w   r3, r3, #260    @ 0x104
+ 10a:   681b            ldr     r3, [r3, #0]
+ 10c:   3b01            subs    r3, #1
+ 10e:   4618            mov     r0, r3
+ 110:   f7ff ffdc       bl      cc <recursive_overflow>
+ 114:   4602            mov     r2, r0
+ 116:   f507 7384       add.w   r3, r7, #264    @ 0x108
+ 11a:   f5a3 7380       sub.w   r3, r3, #256    @ 0x100
+ 11e:   681b            ldr     r3, [r3, #0]
+ 120:   4413            add     r3, r2
+ 122:   4618            mov     r0, r3
+ 124:   f507 7784       add.w   r7, r7, #264    @ 0x108
+ 128:   46bd            mov     sp, r7
+ 12a:   bd80            pop     {r7, pc}
+```
+
+把函数帧摊开看：`push {r7}` 之后 `sub sp, #28`，r7 落在帧底。用 GDB 在函数入口断下来（r7 = 0x2000ffd0），各变量的落点是这样的：
+
+| C 变量 | 地址 | 说明 |
+|--------|------|------|
+| arr[0..3] | r7+0 … r7+12 | 4 个 int |
+| secret | r7+16 | **正好是 arr[4]** |
+| 循环变量 i | r7+20 | **正好是 arr[5]** |
+| 保存的 r7 | r7+28 | =0x2000fff0，调用者的 r7 |
+| main 的返回地址 | r7+44 | **arr[11]**，0x6f |
+
+循环 `for (i = 0; i <= 8; i++) arr[i] = 0xAAAAAAAA;` 里，每次写 arr[i] 就是 `str r2, [r7 + 4*i]`（源码写成 `r7 + i*4 + 24` 再 `[r3, #-24]`，效果一样）。于是：
+
+- i=4 时把 secret 写成 0xAAAAAAAA（这是源码预期的）；
+- **i=5 时把循环变量 i 自己写成了 0xAAAAAAAA！**
+
+i 一旦变成 0xAAAAAAAA，下一轮 `adds r3, #1` 得到 0xAAAAAAAB（当有符号数看是负数），再比较 `cmp r3, #8; ble`——负数当然 ≤ 8，于是接着循环，数组下标彻底失控。GDB 里逐次打印下标和目标地址，看得清清楚楚：
+
+``` bash
+iter4: i=3  store=r7+12=0x2000ffdc
+iter5: i=4  store=r7+16=0x2000ffe0   ← arr[4] = secret
+iter6: i=5  store=r7+20=0x2000ffe4   ← arr[5] = 循环变量自己
+iter7: i=-1431655765  store=0xcaabaa7c
+iter8: i=-1431655764  store=0xcaabaa80
+```
+
+（0xAAAAAAAA 按有符号看是 -1431655766，加 1 得到 -1431655765。）从 iter7 那一轮起，每一次写都落在离栈很远的地方，函数再也不会正常返回。
+
+这就是这一节真正的教训，比“覆盖返回地址”更直白：**越界写在汇编层面没有任何检查，它就是一条普通 STR。**它踩到哪一格完全由地址决定——这一次，它先踩掉了同帧里的兄弟变量，再踩掉了循环变量本身。
+
+那返回地址在哪？在这个帧布局里，buffer_overflow 是用 `bx lr` 返回的（它没把 lr 入栈），真正要保护的是调用者 main 保存的返回地址，位置在 [r7+44]（也就是 arr[11]）。只要越界的脚步能走到那里，main 尾声的 `pop {r7, pc}` 就会把被改写的值装进 PC——这就是经典的“栈溢出劫持返回地址”。本实验没走到那一步，是因为循环在 i=5 时已经因为踩到自己而失控了。
+
+（顺带说一句 recursive_overflow：它每层递归 `sub sp, #264`，200 层约 54KB，而这块板子的 SRAM 只有 64KB，还没到溢出边界；想让它真的把栈撑破，得再加深度或者减小 `buf`。）
+
+# 返回局部变量指针
+
+“返回局部变量地址”是典型 UB。这个实验里其实藏着两个不同的坑：一个是编译器对 `return &x` 的处理，另一个才是真正意义上的“栈空间被复用”。
+
+``` c
+/*
+ * 观察目标: 返回局部变量指针 —— 栈空间被回收后的陷阱
+ *
+ * 编译: make 36-use-after-return.elf
+ * GDB:  make qemu-gdb-36-use-after-return
+ *
+ * 关注点:
+ *   1. 函数返回后栈空间被回收 (ADD SP / POP)
+ *   2. 指向局部变量的指针变成"悬空指针"
+ *   3. 后续函数调用重用同一段栈空间 → 旧值被覆盖
+ *   4. 汇编上: 第一次调用后指针指向的地址内容正确,
+ *              第二次调用后内容被新函数的局部变量覆盖
+ *   5. 有时能用, 有时不能 → 最痛苦的 bug 类型
+ */
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreturn-local-addr"
+
+static int *dangling(void) {
+    int x = 42;
+    return &x;
+}
+
+#pragma GCC diagnostic pop
+
+static volatile int *safe_ptr;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdangling-pointer="
+
+static void capture(void) {
+    volatile int y = 0xDEAD;
+    safe_ptr = &y;
+}
+
+#pragma GCC diagnostic pop
+
+static void overwrite(void) {
+    volatile int z = 0xCAFE;
+    (void)z;
+}
+
+int main(void) {
+    volatile int *p;
+    volatile int r;
+
+    p = dangling();
+    r = *p;
+    overwrite();
+    r = *p;
+
+    capture();
+    r = *safe_ptr;
+    overwrite();
+    r = *safe_ptr;
+    return 0;
+}
+```
+
+## `return &x`：GCC 直接给 NULL
+
+``` asm
+00000090 <dangling>:
+  90:   b480            push    {r7}
+  92:   b083            sub     sp, #12
+  94:   af00            add     r7, sp, #0
+  96:   232a            movs    r3, #42 @ 0x2a
+  98:   607b            str     r3, [r7, #4]
+  9a:   2300            movs    r3, #0
+  9c:   4618            mov     r0, r3
+  9e:   370c            adds    r7, #12
+  a0:   46bd            mov     sp, r7
+  a2:   bc80            pop     {r7}
+  a4:   4770            bx      lr
+
+000000a6 <capture>:
+  a6:   b480            push    {r7}
+  a8:   b083            sub     sp, #12
+  aa:   af00            add     r7, sp, #0
+  ac:   f64d 63ad       movw    r3, #57005      @ 0xdead
+  b0:   607b            str     r3, [r7, #4]
+  b2:   4a04            ldr     r2, [pc, #16]   @ (c4 <capture+0x1e>)
+  b4:   1d3b            adds    r3, r7, #4
+  b6:   6013            str     r3, [r2, #0]
+  b8:   bf00            nop
+  ba:   370c            adds    r7, #12
+  bc:   46bd            mov     sp, r7
+  be:   bc80            pop     {r7}
+  c0:   4770            bx      lr
+  c2:   bf00            nop
+  c4:   20000000        .word   0x20000000
+
+000000c8 <overwrite>:
+  c8:   b480            push    {r7}
+  ca:   b083            sub     sp, #12
+  cc:   af00            add     r7, sp, #0
+  ce:   f64c 23fe       movw    r3, #51966      @ 0xcafe
+  d2:   607b            str     r3, [r7, #4]
+  d4:   687b            ldr     r3, [r7, #4]
+  d6:   bf00            nop
+  d8:   370c            adds    r7, #12
+  da:   46bd            mov     sp, r7
+  dc:   bc80            pop     {r7}
+  de:   4770            bx      lr
+```
+
+`dangling()` 里是 `int x = 42; return &x;`。看汇编：`movs r3, #42` 把 42 写进 x，然后 `movs r3, #0; mov r0, r3`——**返回的是 0（NULL）**。GCC 压根没把 `&x` 交出来，而是直接把这个 UB 确定性化成了一个空指针。
+
+所以 main 里 `r = *p;` 实际是在从地址 0 读——又是向量表，和上一个实验的下场一样（读到 0x20010000）。这个实验的前半段，就这样被编译器“提前终止”了。
+
+## 真正演示栈复用：capture / safe_ptr
+
+实验的后半段换了个方式：`capture()` 把局部变量 y 的地址存进全局 `safe_ptr`，`overwrite()` 再用自己局部的 z 去写栈。汇编上，capture 里 `adds r3, r7, #4; str r3, [r2, #0]`——把 y 的地址（栈上）存进 safe_ptr；overwrite 里 z 也是 `str r3, [r7, #4]`，落在同一个偏移。
+
+因为 capture 和 overwrite 的帧布局一模一样，overwrite 一运行，就会踩在 capture 已经失效的那格栈上。GDB 里跑一遍：
+
+``` bash
+(gdb) capture() 之后：
+safe_ptr = 0x2000ffe4        # 指向已经返回的 capture 帧里的 y
+(gdb) print *safe_ptr
+$ = 0xdead                   # 读出来还是 capture 当初写的值
+(gdb) overwrite() 之后：
+$ = 0xcafe                   # 同一格栈被 overwrite 的局部 z 覆盖了
+```
+
+一次“已经死掉”的栈帧，被下一次函数调用原样接手——指针还指着那个地址，可内存里现在是什么，已经没人保证。这就是“有时能用、有时出错”的来源，也是最难查的那类 bug。
+
+顺带对照一下 dangling：同样是“返回局部地址”，`return &x` 被编译器一步堵死成 NULL；而 `&y` 经由一个全局指针流出去，编译器管不着，栈帧就这么堂而皇之地漏了出去。两条路，两条完全不同的下场。
+
+
+---
+
+# 尾声
+
+到这里，从 C 到汇编的这一趟就走完了。数一下，三十多个实验，覆盖了运算、控制流、函数调用、内存与数据、并发同步、浮点、编译器优化，以及一批“常见 C 错误在 CPU 眼里的样子”。
+
+回头看，真正需要背下来的指令其实没几条——翻来覆去就是 `ldr/str`、`adds/subs`、`cmp` + 条件跳转、`bl/bx`、`push/pop`。剩下的都是同一套方法：写一小段 C，编译，反汇编，然后问一句“为什么是这个指令”。指令集是用来查的，不是用来背的，这一点在亲手做完之后体会格外深。
+
+也正因为结论都是“动手做出来的”，文中有好几处“预期”和“实测”并不一致——GCC 会把 `return &x` 直接变成 NULL，QEMU 对写只读地址不报错，越界写在汇编层完全没有边界，倒序循环因为方向恰好对了而安然退出。这些意外反而比“如期发生”更有价值，因为它们才是真实的编译器 / 模拟器 / CPU 行为，也是把这套方法坚持下去的理由。
+
+下一篇会顺着书往下读，把异常与中断（NVIC、优先级、SysTick）单独拎出来做一轮实验，把这一篇里只有雏形的“中断并发”补齐。
+
+感谢阅读~
