@@ -29,3 +29,6 @@ tags:
 {% asset_img xxx.png %}
 ```
 需要配置_config.yml 中的post_asset_folder为true，同时将png放到md的同名目录下。
+
+# 怎么转成公众号格式
+对于常规的md文件（图片不多的时候），基本上复制到 [markdown 在线转换](https://md.doocs.org/) 然后贴到微信开放平台就好了。如果图不对的话就手动调整一下。
