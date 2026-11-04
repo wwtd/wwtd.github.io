@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width">
+<meta name="theme-color" content="#222" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#222" media="(prefers-color-scheme: dark)"><meta name="generator" content="Hexo 7.3.0">
+
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css" integrity="sha256-VHqXKFhhMxcpubYf9xiWdCiojEbY9NexQ4jh8AxbvcM=" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/3.1.1/animate.min.css" integrity="sha256-PR7ttpcvz8qrF57fur/yAx1qXMFJeJFiA6pSzWi0OIE=" crossorigin="anonymous">
+
+<script class="next-config" data-name="main" type="application/json">{"hostname":"blog.gitk.site","root":"/","images":"/images","scheme":"Gemini","darkmode":{"enable":true},"version":"8.27.0","exturl":false,"sidebar":{"position":"left","width_expanded":320,"width_dual_column":240,"display":"post","padding":18,"offset":12},"hljswrap":true,"codeblock":{"theme":{"light":"default","dark":"stackoverflow-dark"},"prism":{"light":"prism","dark":"prism-dark"},"copy_button":{"enable":true,"style":"mac","show_result":true},"fold":{"enable":true,"height":500},"language":true},"bookmark":{"enable":false,"color":"#222","save":"auto"},"mediumzoom":true,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"stickytabs":false,"motion":{"enable":true,"async":false,"duration":200,"transition":{"menu_item":"fadeInDown","post_block":"fadeIn","post_header":"fadeInDown","post_body":"fadeInDown","coll_header":"fadeInLeft","sidebar":"fadeInUp"}},"i18n":{"placeholder":"搜索...","empty":"没有找到任何搜索结果：${query}","hits_time":"找到 ${hits} 个搜索结果（用时 ${time} 毫秒）","hits":"找到 ${hits} 个搜索结果"},"path":"/search.json","localsearch":{"enable":true,"top_n_per_article":3,"unescape":false,"preload":false}}</script><script src="/js/config.js" defer></script>
+
+    <meta name="description" content="硬盘哪来的2015年暑假，高考完我获得了我的第一台电脑，型号记不太清了，大概是一个联想的黑盒子。当时应该是主板上就一个硬盘，东芝的500G机械硬盘。然后这个硬盘就一直静静地在主板上不发光只发热了。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="workbuddy恢复机械硬盘数据记录">
+<meta property="og:url" content="https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/index.html">
+<meta property="og:site_name" content="WWTD&#39;s Blog">
+<meta property="og:description" content="硬盘哪来的2015年暑假，高考完我获得了我的第一台电脑，型号记不太清了，大概是一个联想的黑盒子。当时应该是主板上就一个硬盘，东芝的500G机械硬盘。然后这个硬盘就一直静静地在主板上不发光只发热了。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2026-11-04T11:00:00.000Z">
+<meta property="article:modified_time" content="2026-11-04T14:26:09.876Z">
+<meta property="article:author" content="wwtd">
+<meta property="article:tag" content="生活杂记">
+<meta property="article:tag" content="AI的新鲜用法">
+<meta name="twitter:card" content="summary">
+
+
+<link rel="canonical" href="https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/">
+
+
+<script class="next-config" data-name="page" type="application/json">{"sidebar":"","isHome":false,"isPost":true,"lang":"zh-CN","comments":true,"permalink":"https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/","path":"2026/11/04/workbuddy_fix_harddisk/","title":"workbuddy恢复机械硬盘数据记录"}</script>
+
+<script class="next-config" data-name="calendar" type="application/json">""</script>
+<title>workbuddy恢复机械硬盘数据记录 | WWTD's Blog</title>
+  
+
+
+
+
+
+
+
+
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js" integrity="sha256-XL2inqUJaslATFnHdJOi9GfQ60on8Wx1C2H8DYiN1xY=" crossorigin="anonymous" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/next-theme-pjax/0.6.0/pjax.min.js" integrity="sha256-vxLn1tSKWD4dqbMRyv940UYw4sXgMtYcK6reefzZrao=" crossorigin="anonymous" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/medium-zoom/1.1.0/medium-zoom.min.js" integrity="sha256-ZgMyDAIYDYGxbcpJcfUnYwNevG/xi9OHKaR/8GK+jWc=" crossorigin="anonymous" defer></script>
+<script src="/js/utils.js" defer></script><script src="/js/motion.js" defer></script><script src="/js/sidebar.js" defer></script><script src="/js/next-boot.js" defer></script><script src="/js/pjax.js" defer></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/hexo-generator-searchdb/1.5.0/search.js" integrity="sha256-xFC6PJ82SL9b3WkGjFavNiA9gm5z6UBxWPiu4CYjptg=" crossorigin="anonymous" defer></script>
+<script src="/js/third-party/search/local-search.js" defer></script>
+
+
+
+
+
+
+
+  
+  <script data-pjax async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
+
+
+
+
+
+  <noscript>
+    <link rel="stylesheet" href="/css/noscript.css">
+  </noscript>
+<link rel="alternate" href="/rss2.xml" title="WWTD's Blog" type="application/rss+xml">
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" class="use-motion">
+  <div class="headband"></div>
+
+  <main class="main">
+    <div class="column">
+      <header class="header" itemscope itemtype="http://schema.org/WPHeader"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏" role="button">
+        <span class="toggle-line"></span>
+        <span class="toggle-line"></span>
+        <span class="toggle-line"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <i class="logo-line"></i>
+      <p class="site-title">WWTD's Blog</p>
+      <i class="logo-line"></i>
+    </a>
+      <p class="site-subtitle" itemprop="description">Welcome to my blog</p>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger" aria-label="搜索" role="button">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+<nav class="site-nav">
+  <ul class="main-menu menu"><li class="menu-item menu-item-home"><a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a></li><li class="menu-item menu-item-archives"><a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档<span class="badge">7</span></a></li><li class="menu-item menu-item-tags"><a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签<span class="badge">9</span></a></li><li class="menu-item menu-item-categories"><a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类<span class="badge">0</span></a></li><li class="menu-item menu-item-about"><a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a></li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+      <div class="search-header">
+        <span class="search-icon">
+          <i class="fa fa-search"></i>
+        </span>
+        <div class="search-input-container">
+          <input autocomplete="off" autocapitalize="off" maxlength="80"
+                placeholder="搜索..." spellcheck="false"
+                type="search" class="search-input">
+        </div>
+        <span class="popup-btn-close" role="button">
+          <i class="fa fa-times-circle"></i>
+        </span>
+      </div>
+      <div class="search-result-container">
+        <div class="search-result-icon">
+          <i class="fa fa-spinner fa-pulse fa-5x"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</header>
+        
+  
+  <aside class="sidebar">
+
+    <div class="sidebar-inner sidebar-nav-active sidebar-toc-active">
+      <ul class="sidebar-nav">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <div class="sidebar-panel-container">
+        <!--noindex-->
+        <div class="post-toc-wrap sidebar-panel">
+            <div class="post-toc animated"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A1%AC%E7%9B%98%E5%93%AA%E6%9D%A5%E7%9A%84"><span class="nav-text">硬盘哪来的</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E7%A1%AC%E7%9B%98%E5%92%8B%E5%9D%8F%E7%9A%84"><span class="nav-text">硬盘咋坏的</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%A4%B1%E8%B4%A5%E7%9A%84%E6%8A%A2%E6%95%91"><span class="nav-text">失败的抢救</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%A4%B1%E8%B4%A5%E4%B9%8B%E5%90%8E%E5%91%A2"><span class="nav-text">失败之后呢</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%80%8E%E4%B9%88%E6%81%A2%E5%A4%8D%E7%9A%84"><span class="nav-text">怎么恢复的</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%AE%8C%E5%B7%A5%E4%B9%8B%E5%90%8E"><span class="nav-text">完工之后</span></a></li></ol></div>
+        </div>
+        <!--/noindex-->
+
+        <div class="site-overview-wrap sidebar-panel">
+          <div class="site-author animated" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="wwtd"
+      src="/images/avatar.png">
+  <p class="site-author-name" itemprop="name">wwtd</p>
+  <div class="site-description" itemprop="description">description: 嵌入式开发、RTOS、Linux、MCU、NFC 与技术学习记录</div>
+</div>
+<div class="site-state-wrap animated">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+        <a href="/archives/">
+          <span class="site-state-item-count">7</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-tags">
+          <a href="/tags/">
+        <span class="site-state-item-count">9</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author animated">
+      <span class="links-of-author-item">
+        <a href="https://github.com/wwtd" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;wwtd" rel="noopener me" target="_blank"><i class="fab fa-github fa-fw"></i></a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="mailto:chentengfei1998@gmail.com" title="E-Mail → mailto:chentengfei1998@gmail.com" rel="noopener me" target="_blank"><i class="fa fa-envelope fa-fw"></i></a>
+      </span>
+  </div>
+
+        </div>
+      </div>
+    </div>
+
+    
+  </aside>
+
+
+    </div>
+
+    <div class="main-inner post posts-expand">
+
+
+  
+
+
+<div class="post-block">
+  
+  
+
+  <article itemscope itemtype="http://schema.org/Article" class="post-content" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.png">
+      <meta itemprop="name" content="wwtd">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="WWTD's Blog">
+      <meta itemprop="description" content="description: 嵌入式开发、RTOS、Linux、MCU、NFC 与技术学习记录">
+    </span>
+
+    <span hidden itemprop="post" itemscope itemtype="http://schema.org/CreativeWork">
+      <meta itemprop="name" content="workbuddy恢复机械硬盘数据记录 | WWTD's Blog">
+      <meta itemprop="description" content="">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          workbuddy恢复机械硬盘数据记录
+        </h1>
+
+        <div class="post-meta-container">
+          <div class="post-meta">
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar"></i>
+      </span>
+      <span class="post-meta-item-text">发表于</span>
+
+      <time title="创建时间：2026-11-04 19:00:00" itemprop="dateCreated datePublished" datetime="2026-11-04T19:00:00+08:00">2026-11-04</time>
+    </span>
+    <span class="post-meta-item">
+      <span class="post-meta-item-icon">
+        <i class="far fa-calendar-check"></i>
+      </span>
+      <span class="post-meta-item-text">更新于</span>
+      <time title="修改时间：2026-11-04 22:26:09" itemprop="dateModified" datetime="2026-11-04T22:26:09+08:00">2026-11-04</time>
+    </span>
+
+  
+</div>
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody"><h2 id="硬盘哪来的"><a href="#硬盘哪来的" class="headerlink" title="硬盘哪来的"></a>硬盘哪来的</h2><p>2015年暑假，高考完我获得了我的第一台电脑，型号记不太清了，大概是一个联想的黑盒子。<br>当时应该是主板上就一个硬盘，东芝的500G机械硬盘。然后这个硬盘就一直静静地在主板上不发光只发热了。</p>
+<h2 id="硬盘咋坏的"><a href="#硬盘咋坏的" class="headerlink" title="硬盘咋坏的"></a>硬盘咋坏的</h2><p>硬盘大概是在19年的冬天，那个时候我留本校继续读书，每天除了上课就是去实验室发呆。<br>有一天发呆到一半，电脑突然黑屏或者蓝屏了。到我弄明白发生什么的时候，只有一个想法：<br>艹，硬盘挂了。</p>
+<h2 id="失败的抢救"><a href="#失败的抢救" class="headerlink" title="失败的抢救"></a>失败的抢救</h2><p>抢救硬盘之前，首先我需要抢救电脑。应该主板上就一个硬盘，实际上硬盘挂了之后系统已经无法正常工作了。<br>幸好时间已经来到了19年，jd还是很方便的，下单了新的硬盘和一个外置硬盘盒。一方面复活电脑，另一方面思考有没有机会修复数据。<br>可惜了，我当时属实菜鸡，翻了一些CSDN和知乎，试了下类似傲梅和DiskGenius之类的，没救活。</p>
+<h2 id="失败之后呢"><a href="#失败之后呢" class="headerlink" title="失败之后呢"></a>失败之后呢</h2><p>虽然没有抢救回数据，但是我对这次损坏的判断应该还是一个局部的损坏。原因是，硬盘损坏的时候是正常使用中突然异常的。<br>正常的桌面使用场景，也不涉及到什么奇怪的情况。大概率还是局部的损坏，考虑到机械硬盘的特性，绝大部分的数据应该还安静地呆在机械硬盘的盘面上。<br>就这样，这块硬盘就在我抽屉里吃灰了。<br>毕业、工作，搬了几次家，但我总是有一个堆放各种电子杂物的抽屉，它就跟着辗转了几个抽屉，直到现在。</p>
+<h2 id="怎么恢复的"><a href="#怎么恢复的" class="headerlink" title="怎么恢复的"></a>怎么恢复的</h2><p>最近突然对workbuddy有点好奇，微信注册之后是免费套餐，然后送了很多积分，每天签到还有积分（workbuddy要不要给我广告费啊）。但是老实说，workbuddy给人的感觉就不是很会coding的样子，它的插件也都是一些偏向业务的插件。<br>那脱离了自己最常用的coding场景，我一时想不到生活里还有什么AI的好场景。那天突然来了灵感，要不试试用它救一下那个硬盘？<br>早上上班之前，打开电脑，连上usb硬盘盒。打开workbuddy，说清楚我要干什么，出门上班，一气呵成。<br>到了公司又开始在想，它不会卡住吧，灵机一动，下载了手机app，登录微信之后，发现进度是同步的，还能远程监工。<br>其实这个任务对于AI可能不算难，当时的问题是机械硬盘的D盘分区NTFS文件系统的关键数据 $MFT 和 $MFTMirr 被损坏了，$MFT也只是损坏了0-3的数据，盘面的其他数据都是完好的。workbuddy很快就告诉我发生了什么，然后开始着手恢复数据。但是因为USB硬盘盒以及机械硬盘的先天速率就不高，总共200+G数据按照15M每秒的速度传输，中间还返工过。<br>早上出门去，中午的时候workbuddy就告诉我搞定了，我看了历史记录只花了几十积分，还不到每天签到的100积分。<br>下班回家看了下数据，果然都恢复出来了。我还问AI，让它给我复盘当时到底是怎么回事，让我对NTFS也多了一些了解。</p>
+<h2 id="完工之后"><a href="#完工之后" class="headerlink" title="完工之后"></a>完工之后</h2><p>事情结束了，却让我有点感慨。<br>一方面，看了一些过去的记录，感叹自己当时真是个宅男。除了各种实验报告、不知道哪个老师发的破解软件、写得稀烂的本科论文、用1.cpp、2.cpp、21.cpp命名的代码文件、和我现在的听歌品味截然不同的音乐文件，就是一些不宜展开的内容。年轻真好啊，脑袋空空的人也能获得快乐，也能自以为充实的度过每一天。<br>另一方面，就是感叹，AI真的是有魔法，它可以把各个领域的技术（当然是非尖端技术）以廉价甚至无偿的形式供应给每一个人。甚至当你解决完问题的时候你都不了解到底发生了什么，就像这篇文章写到最后都没有写很多细节，没写NTFS的原理，没写$MFT 和 $MFTMirr 是负责什么的怎么工作，没写AI是通过什么命令修复的。这些可能都不太重要了。算了，对AI的感慨我要单开一篇。</p>
+
+    </div>
+
+    
+    
+    
+
+    <footer class="post-footer">
+          
+
+<div class="post-copyright">
+<ul>
+  <li class="post-copyright-author">
+      <strong>本文作者： </strong>wwtd
+  </li>
+  <li class="post-copyright-link">
+      <strong>本文链接：</strong>
+      <a href="https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/" title="workbuddy恢复机械硬盘数据记录">https://blog.gitk.site/2026/11/04/workbuddy_fix_harddisk/</a>
+  </li>
+  <li class="post-copyright-license">
+      <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+          <div class="post-tags">
+              <a href="/tags/%E7%94%9F%E6%B4%BB%E6%9D%82%E8%AE%B0/" rel="tag"># 生活杂记</a>
+              <a href="/tags/AI%E7%9A%84%E6%96%B0%E9%B2%9C%E7%94%A8%E6%B3%95/" rel="tag"># AI的新鲜用法</a>
+          </div>
+
+        
+
+          <div class="post-nav">
+            <div class="post-nav-item">
+                <a href="/2026/05/27/cortex_m3_m4_note_2/" rel="prev" title="从C语言到汇编指令">
+                  <i class="fa fa-angle-left"></i> 从C语言到汇编指令
+                </a>
+            </div>
+            <div class="post-nav-item">
+                <a href="/2026/11/04/2026/" rel="next" title="加速的2026年">
+                  加速的2026年 <i class="fa fa-angle-right"></i>
+                </a>
+            </div>
+          </div>
+    </footer>
+  </article>
+</div>
+
+
+
+
+
+
+</div>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-inner">
+
+  <div class="copyright">
+    &copy; 2025 – 
+    <span itemprop="copyrightYear">2026</span>
+    <span class="with-love">
+      <i class="fa fa-heart"></i>
+    </span>
+    <span class="author" itemprop="copyrightHolder">wwtd</span>
+  </div>
+<div class="busuanzi-count">
+    <span class="post-meta-item" id="busuanzi_container_site_uv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-user"></i>
+      </span>
+      <span class="site-uv" title="总访客量">
+        <span id="busuanzi_value_site_uv"></span>
+      </span>
+    </span>
+    <span class="post-meta-item" id="busuanzi_container_site_pv">
+      <span class="post-meta-item-icon">
+        <i class="fa fa-eye"></i>
+      </span>
+      <span class="site-pv" title="总访问量">
+        <span id="busuanzi_value_site_pv"></span>
+      </span>
+    </span>
+</div>
+
+    </div>
+  </footer>
+
+  
+  <div class="toggle sidebar-toggle" role="button">
+    <span class="toggle-line"></span>
+    <span class="toggle-line"></span>
+    <span class="toggle-line"></span>
+  </div>
+  <div class="sidebar-dimmer"></div>
+  <div class="back-to-top" role="button" aria-label="返回顶部">
+    <i class="fa fa-arrow-up fa-lg"></i>
+    <span>0%</span>
+  </div>
+  <div class="reading-progress-bar"></div>
+
+<noscript>
+  <div class="noscript-warning">Theme NexT works best with JavaScript enabled</div>
+</noscript>
+
+</body>
+</html>
