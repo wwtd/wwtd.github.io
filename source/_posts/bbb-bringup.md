@@ -383,8 +383,359 @@ Call trace:
 ```
 可以看到，kernel启动已经被引导起来了，但是很快panic了，因为没有rootfs给它用。
 
-# initfs 与rootfs
+# initramfs 与rootfs
+## initramfs
+在内核缺少rootfs的情况下，先搞initramfs比较容易。考虑使用busybox静态链接。
+### 获取busybox源码
+``` bash
+wget https://www.busybox.net/downloads/busybox-1.38.0.tar.bz2
+tar xjvf busybox-1.38.0.tar.bz2
+```
+### 静态编译busybox
+``` bash
+rm -rf $HOME/build/bringup-busybox
+mkdir -p $HOME/build/bringup-busybox
+make -C $HOME/opensource/busybox-1.38.0 O=$HOME/build/bringup-busybox ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- defconfig
+sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' $HOME/build/bringup-busybox/.config
+make -C $HOME/opensource/busybox-1.38.0 O=$HOME/build/bringup-busybox ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- oldconfig </dev/null
+make -C $HOME/opensource/busybox-1.38.0 O=$HOME/build/bringup-busybox ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j4
 
+file $HOME/build/bringup-busybox/busybox
+strings $HOME/build/bringup-busybox/busybox | grep -m1 'BusyBox v'
+grep -E '^CONFIG_(SH_IS_ASH|MOUNT|MDEV|CAT|LS|PS|GREP|CP|MKDIR|SYNC|UNAME|LN|RM|MV|SLEEP|UMOUNT|DMESG|ECHO)=' $HOME/build/bringup-busybox/.config
+```
+### 制作initramfs
+``` bash
+rm -rf "$HOME/build/bringup-initramfs"
+mkdir -p "$HOME/build/bringup-initramfs/bin" \
+         "$HOME/build/bringup-initramfs/dev" \
+         "$HOME/build/bringup-initramfs/proc" \
+         "$HOME/build/bringup-initramfs/sys" \
+         "$HOME/build/bringup-initramfs/tmp"
+
+cp "$HOME/build/bringup-busybox/busybox" "$HOME/build/bringup-initramfs/bin/busybox"
+chmod 755 "$HOME/build/bringup-initramfs/bin/busybox"
+for a in sh mount umount cat echo ls ps mdev dmesg sleep grep cp mkdir sync uname ln rm mv setsid cttyhack; do
+  ln -sf busybox "$HOME/build/bringup-initramfs/bin/$a"
+done
+
+cat > "$HOME/build/bringup-initramfs/init" <<'EOF'
+#!/bin/sh
+export PATH=/bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+exec </dev/ttyS0 >/dev/ttyS0 2>&1
+
+echo
+echo "===== BRINGUP SERIAL SHELL ====="
+cat /proc/version
+echo "cmdline: $(cat /proc/cmdline)"
+echo "serial : $(cat /proc/device-tree/serial-number)"
+echo "================================"
+echo
+# PID 1 先变成 session leader，cttyhack 才能把 ttyS0 设成控制终端
+exec setsid cttyhack /bin/sh
+EOF
+chmod 755 "$HOME/build/bringup-initramfs/init"
+```
+### 重新生成kernel
+``` bash
+tee -a "$HOME/build/bringup-kernel/.config" >/dev/null <<'EOF'
+# BusyBox 是 gnueabihf 硬浮点，用户态会执行 VFP/NEON 指令
+CONFIG_VFP=y
+CONFIG_NEON=y
+# /init 是 shell 脚本
+CONFIG_BINFMT_SCRIPT=y
+EOF
+
+$HOME/opensource/linux-7.4-rc4/scripts/config \
+  --file "$HOME/build/bringup-kernel/.config" \
+  --set-str INITRAMFS_SOURCE "$HOME/build/bringup-initramfs"
+
+make -C $HOME/opensource/linux-7.4-rc4 O=$HOME/build/bringup-kernel ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
+make -C $HOME/opensource/linux-7.4-rc4 O=$HOME/build/bringup-kernel ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j4 zImage
+
+grep '^CONFIG_INITRAMFS_SOURCE=' $HOME/build/bringup-kernel/.config
+ls -lh $HOME/build/bringup-kernel/usr/initramfs_data.cpio
+```
+### 烧录验证
+重新生成的kernel中已经带了initramfs，而DTB仅与DTS相关不需更新，直接替换掉SD卡中的kernel即可。
+``` bash
+sudo mkdir -p /mnt/sd
+sudo umount /dev/sdb* 2>/dev/null || true
+sudo mount /dev/sdb1 /mnt/sd
+
+sudo cp $HOME/build/bringup-kernel/arch/arm/boot/zImage /mnt/sd/zImage
+sync
+
+sha256sum $HOME/build/bringup-kernel/arch/arm/boot/zImage
+sudo sha256sum /mnt/sd/zImage
+
+sudo umount /mnt/sd
+```
+与前面类似，进uboot后any key打断
+``` bash
+load mmc 0:1 ${kernel_addr_r} /zImage
+load mmc 0:1 ${fdt_addr_r} /am335x-boneblack.dtb
+setenv bootargs console=ttyS0,115200n8
+bootz ${kernel_addr_r} - ${fdt_addr_r}
+```
+可以看到现象，kernel正常启动，并且进入initramfs
+```
+U-Boot SPL 2027.01-rc2 (Nov 22 2026 - 04:33:29 -0500)
+Trying to boot from MMC1
+
+
+U-Boot 2027.01-rc2 (Nov 22 2026 - 04:33:29 -0500)
+
+CPU  : AM335X-GP rev 2.1
+Model: TI AM335x BeagleBone Black
+DRAM:  512 MiB
+Core:  218 devices, 21 uclasses, devicetree: separate
+WDT:   Started wdt@0 with servicing every 1000ms (60s timeout)
+NAND:  0 MiB
+MMC:   OMAP SD/MMC: 0, OMAP SD/MMC: 1
+Unable to read "uboot.env" from mmc0:1...
+<ethaddr> not set. Validating first E-fuse MAC
+Net:   eth2: switch@0using musb-hdrc, OUT ep1out IN ep1in STATUS ep2in
+MAC de:ad:be:ef:00:01
+HOST MAC de:ad:be:ef:00:00
+RNDIS ready
+, eth3: usb_ether
+
+Hit any key to stop autoboot: 0
+=>
+=>
+=>
+=>
+=> load mmc 0:1 ${kernel_addr_r} /zImage
+2825904 bytes read in 186 ms (14.5 MiB/s)
+=> load mmc 0:1 ${fdt_addr_r} /am335x-boneblack.dtb
+98486 bytes read in 9 ms (10.4 MiB/s)
+=> setenv bootargs console=ttyS0,115200n8
+=> bootz ${kernel_addr_r} - ${fdt_addr_r}
+Kernel image @ 0x82000000 [ 0x000000 - 0x2b1eb0 ]
+## Flattened Device Tree blob at 88000000
+   Booting using the fdt blob at 0x88000000
+Working FDT set to 88000000
+   Loading Device Tree to 8ffe4000, end 8ffff0b5 ... OK
+Working FDT set to 8ffe4000
+
+Starting kernel ...
+
+Booting Linux on physical CPU 0x0
+Linux version 7.4.0-rc4 (tengfei@debian) (arm-linux-gnueabihf-gcc (Debian 12.2.0-14) 12.2.0, GNU ld (GNU Binutils for Debian) 2.40) #21 Thu Nov 26 08:14:24 EST 2026
+CPU: ARMv7 Processor [413fc082] revision 2 (ARMv7), cr=50c5387d
+CPU: PIPT / VIPT nonaliasing data cache, VIPT aliasing instruction cache
+OF: fdt: Machine model: TI AM335x BeagleBone Black
+Memory policy: Data cache writeback
+OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+CPU: All CPU(s) started in SVC mode.
+AM335X ES2.1 (sgx neon)
+Zone ranges:
+  Normal   [mem 0x0000000080000000-0x000000009fefffff]
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000000080000000-0x000000009fefffff]
+Initmem setup node 0 [mem 0x0000000080000000-0x000000009fefffff]
+On node 0, zone Normal: 256 pages in unavailable ranges
+Kernel command line: console=ttyS0,115200n8
+printk: log buffer data + meta data: 131072 + 409600 = 540672 bytes
+Dentry cache hash table entries: 65536 (order: 6, 262144 bytes, linear)
+Inode-cache hash table entries: 32768 (order: 5, 131072 bytes, linear)
+Built 1 zonelists, mobility grouping on.  Total pages: 130816
+mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+SLUB: HWalign=16, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+NR_IRQS: 16, nr_irqs: 16, preallocated irqs: 16
+IRQ: Found an INTC at 0x(ptrval) (revision 5.0) with 128 interrupts
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+TI gptimer clocksource: always-on /ocp/interconnect@44c00000/segment@200000/target-module@31000
+sched_clock: 32 bits at 24MHz, resolution 41ns, wraps every 89478484971ns
+clocksource: dmtimer: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 79635851949 ns
+TI gptimer clockevent: 24000000 Hz at /ocp/interconnect@48000000/segment@0/target-module@40000
+Console: colour dummy device 80x30
+Calibrating delay loop... 996.14 BogoMIPS (lpj=4980736)
+CPU: Testing write buffer coherency: ok
+CPU0: Spectre v2: using BPIALL workaround
+pid_max: default: 32768 minimum: 301
+Mount-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+VFS: Finished mounting rootfs on nullfs
+Setting up static identity map for 0x80100000 - 0x80100054
+Memory: 511664K/523264K available (2048K kernel code, 479K rwdata, 532K rodata, 2048K init, 180K bss, 10648K reserved, 0K cma-reserved)
+devtmpfs: initialized
+VFP support v0.3: implementor 41 architecture 3 part 30 variant c rev 3
+posixtimers hash table entries: 512 (order: 0, 2048 bytes, linear)
+futex hash table entries: 256 (3072 bytes on 1 NUMA nodes, total 3 KiB, linear).
+DMA: preallocated 256 KiB pool for atomic coherent allocations
+/ocp/interconnect@48000000/segment@300000/target-module@e000/lcdc@0: Fixed dependency cycle(s) with /ocp/interconnect@44c00000/segment@200000/target-module@b000/i2c@0/tda19988@70
+/ocp/interconnect@44c00000/segment@200000/target-module@b000/i2c@0/tda19988@70: Fixed dependency cycle(s) with /ocp/interconnect@48000000/segment@300000/target-module@e000/lcdc@0
+clocksource: Switched to clocksource dmtimer
+workingset: timestamp_bits=30 (anon: 25) max_order=17 bucket_order=0 (anon: 0)
+target-module@4b000000:target-module@140000:pmu@0:fck: device ID is greater than 24
+Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+omap_voltage_late_init: Voltage driver support not added
+printk: console [ttyS0] disabled
+44e09000.serial: ttyS0 MMIO:0x44e09000 (irq = 18, base_baud = 3000000) is a 8250
+printk: console [ttyS0] enabled
+/ocp/interconnect@44c00000/segment@200000/target-module@10000/scm@0/pinmux@800: Fixed dependency cycle(s) with /ocp/interconnect@44c00000/segment@200000/target-module@10000/scm@0/pinmux@800/clkout2s
+48000000.interconnect:segment@200000:target-module@0:mpu@0:fck: device ID is greater than 24
+ti-sysc 44e31000.target-module: Failed to create device link (0x180) with supplier ocp for /ocp/interconnect@44c00000/segment@200000/target-module@31000/timer@0
+ti-sysc 48040000.target-module: Failed to create device link (0x180) with supplier ocp for /ocp/interconnect@48000000/segment@0/target-module@40000/timer@0
+omap_prm 44e00d00.prm: sync_state() pending due to 44d00000.cpu
+clk: Disabling unused clocks
+PM: genpd: Disabling unused power domains
+Warning: unable to open an initial console.
+Freeing unused kernel image (initmem) memory: 2048K
+Run /init as init process
+
+===== BRINGUP SERIAL SHELL =====
+Linux version 7.4.0-rc4 (tengfei@debian) (arm-linux-gnueabihf-gcc (Debian 12.2.0-14) 12.2.0, GNU ld (GNU Binutils for Debian) 2.40) #21 Thu Nov 26 08:14:24 EST 2026
+cmdline: console=ttyS0,115200n8
+serial : 3816BBBK05DD
+================================
+
+~ #
+~ #
+```
+### boot.scr
+虽然已经成功启动kernel了，但是每次load都依赖在uboot里打断，这样不够方便，还是写一个boot脚本让它自动从指定的initramfs启动比较好。
+``` bash
+cat > $HOME/build/boot.cmd <<'EOF'
+echo "== bringup: loading zImage + DTB from SD =="
+load mmc 0:1 ${kernel_addr_r} /zImage
+load mmc 0:1 ${fdt_addr_r} /am335x-boneblack.dtb
+setenv bootargs 'console=ttyS0,115200n8'
+bootz ${kernel_addr_r} - ${fdt_addr_r}
+EOF
+
+$HOME/build/bringup-uboot/tools/mkimage -A arm -O linux -T script -C none \
+  -n "bringup boot" -d $HOME/build/boot.cmd $HOME/build/boot.scr
+
+sudo mount /dev/sdb1 /mnt/sd
+sudo cp $HOME/build/boot.scr /mnt/sd/boot.scr
+sync
+sudo umount /mnt/sd
+```
+可以看到现象
+```
+U-Boot SPL 2027.01-rc2 (Nov 22 2026 - 04:33:29 -0500)
+Trying to boot from MMC1
+
+
+U-Boot 2027.01-rc2 (Nov 22 2026 - 04:33:29 -0500)
+
+CPU  : AM335X-GP rev 2.1
+Model: TI AM335x BeagleBone Black
+DRAM:  512 MiB
+Core:  218 devices, 21 uclasses, devicetree: separate
+WDT:   Started wdt@0 with servicing every 1000ms (60s timeout)
+NAND:  0 MiB
+MMC:   OMAP SD/MMC: 0, OMAP SD/MMC: 1
+Unable to read "uboot.env" from mmc0:1...
+<ethaddr> not set. Validating first E-fuse MAC
+Net:   eth2: switch@0using musb-hdrc, OUT ep1out IN ep1in STATUS ep2in
+MAC de:ad:be:ef:00:01
+HOST MAC de:ad:be:ef:00:00
+RNDIS ready
+, eth3: usb_ether
+
+Hit any key to stop autoboot: 0
+** Invalid partition 2 **
+switch to partitions #0, OK
+mmc0 is current device
+Scanning mmc 0:1...
+Found U-Boot script /boot.scr
+290 bytes read in 1 ms (283.2 KiB/s)
+## Executing script at 80000000
+== bringup: loading zImage + DTB from SD ==
+2826000 bytes read in 185 ms (14.6 MiB/s)
+98486 bytes read in 9 ms (10.4 MiB/s)
+Kernel image @ 0x82000000 [ 0x000000 - 0x2b1f10 ]
+## Flattened Device Tree blob at 88000000
+   Booting using the fdt blob at 0x88000000
+Working FDT set to 88000000
+   Loading Device Tree to 8ffe4000, end 8ffff0b5 ... OK
+Working FDT set to 8ffe4000
+
+Starting kernel ...
+
+Booting Linux on physical CPU 0x0
+Linux version 7.4.0-rc4 (tengfei@debian) (arm-linux-gnueabihf-gcc (Debian 12.2.0-14) 12.2.0, GNU ld (GNU Binutils for Debian) 2.40) #22 Thu Nov 26 08:44:18 EST 2026
+CPU: ARMv7 Processor [413fc082] revision 2 (ARMv7), cr=50c5387d
+CPU: PIPT / VIPT nonaliasing data cache, VIPT aliasing instruction cache
+OF: fdt: Machine model: TI AM335x BeagleBone Black
+Memory policy: Data cache writeback
+OF: reserved mem: Reserved memory: No reserved-memory node in the DT
+CPU: All CPU(s) started in SVC mode.
+AM335X ES2.1 (sgx neon)
+Zone ranges:
+  Normal   [mem 0x0000000080000000-0x000000009fefffff]
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000000080000000-0x000000009fefffff]
+Initmem setup node 0 [mem 0x0000000080000000-0x000000009fefffff]
+On node 0, zone Normal: 256 pages in unavailable ranges
+Kernel command line: console=ttyS0,115200n8
+printk: log buffer data + meta data: 131072 + 409600 = 540672 bytes
+Dentry cache hash table entries: 65536 (order: 6, 262144 bytes, linear)
+Inode-cache hash table entries: 32768 (order: 5, 131072 bytes, linear)
+Built 1 zonelists, mobility grouping on.  Total pages: 130816
+mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+SLUB: HWalign=16, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+NR_IRQS: 16, nr_irqs: 16, preallocated irqs: 16
+IRQ: Found an INTC at 0x(ptrval) (revision 5.0) with 128 interrupts
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+TI gptimer clocksource: always-on /ocp/interconnect@44c00000/segment@200000/target-module@31000
+sched_clock: 32 bits at 24MHz, resolution 41ns, wraps every 89478484971ns
+clocksource: dmtimer: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 79635851949 ns
+TI gptimer clockevent: 24000000 Hz at /ocp/interconnect@48000000/segment@0/target-module@40000
+Console: colour dummy device 80x30
+Calibrating delay loop... 996.14 BogoMIPS (lpj=4980736)
+CPU: Testing write buffer coherency: ok
+CPU0: Spectre v2: using BPIALL workaround
+pid_max: default: 32768 minimum: 301
+Mount-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes, linear)
+VFS: Finished mounting rootfs on nullfs
+Setting up static identity map for 0x80100000 - 0x80100054
+Memory: 511664K/523264K available (2048K kernel code, 479K rwdata, 532K rodata, 2048K init, 180K bss, 10648K reserved, 0K cma-reserved)
+devtmpfs: initialized
+VFP support v0.3: implementor 41 architecture 3 part 30 variant c rev 3
+posixtimers hash table entries: 512 (order: 0, 2048 bytes, linear)
+futex hash table entries: 256 (3072 bytes on 1 NUMA nodes, total 3 KiB, linear).
+DMA: preallocated 256 KiB pool for atomic coherent allocations
+/ocp/interconnect@48000000/segment@300000/target-module@e000/lcdc@0: Fixed dependency cycle(s) with /ocp/interconnect@44c00000/segment@200000/target-module@b000/i2c@0/tda19988@70
+/ocp/interconnect@44c00000/segment@200000/target-module@b000/i2c@0/tda19988@70: Fixed dependency cycle(s) with /ocp/interconnect@48000000/segment@300000/target-module@e000/lcdc@0
+clocksource: Switched to clocksource dmtimer
+workingset: timestamp_bits=30 (anon: 25) max_order=17 bucket_order=0 (anon: 0)
+target-module@4b000000:target-module@140000:pmu@0:fck: device ID is greater than 24
+Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+omap_voltage_late_init: Voltage driver support not added
+printk: console [ttyS0] disabled
+44e09000.serial: ttyS0 MMIO:0x44e09000 (irq = 18, base_baud = 3000000) is a 8250
+printk: console [ttyS0] enabled
+/ocp/interconnect@44c00000/segment@200000/target-module@10000/scm@0/pinmux@800: Fixed dependency cycle(s) with /ocp/interconnect@44c00000/segment@200000/target-module@10000/scm@0/pinmux@800/clkout2s
+48000000.interconnect:segment@200000:target-module@0:mpu@0:fck: device ID is greater than 24
+ti-sysc 44e31000.target-module: Failed to create device link (0x180) with supplier ocp for /ocp/interconnect@44c00000/segment@200000/target-module@31000/timer@0
+ti-sysc 48040000.target-module: Failed to create device link (0x180) with supplier ocp for /ocp/interconnect@48000000/segment@0/target-module@40000/timer@0
+omap_prm 44e00d00.prm: sync_state() pending due to 44d00000.cpu
+clk: Disabling unused clocks
+PM: genpd: Disabling unused power domains
+Warning: unable to open an initial console.
+Freeing unused kernel image (initmem) memory: 2048K
+Run /init as init process
+
+===== BRINGUP SERIAL SHELL =====
+Linux version 7.4.0-rc4 (tengfei@debian) (arm-linux-gnueabihf-gcc (Debian 12.2.0-14) 12.2.0, GNU ld (GNU Binutils for Debian) 2.40) #22 Thu Nov 26 08:44:18 EST 2026
+cmdline: console=ttyS0,115200n8
+serial : 3816BBBK05DD
+================================
+
+~ #
+```
+## rootfs
 # fastboot
 
 # A/B + Meta分区
