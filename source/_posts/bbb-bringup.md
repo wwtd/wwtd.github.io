@@ -735,22 +735,6 @@ serial : 3816BBBK05DD
 
 ~ #
 ```
-
-- 备份此阶段产出
-``` bash
-mkdir -p "$HOME/build/bbb-assets"
-
-cp "$HOME/build/bringup-kernel/arch/arm/boot/zImage" \
-   "$HOME/build/bbb-assets/zImage-initramfs"
-cp "$HOME/build/bringup-kernel/.config" \
-   "$HOME/build/bbb-assets/config-initramfs"
-
-sudo mkdir -p /mnt/sd
-sudo mount /dev/sdb1 /mnt/sd
-sudo cp /mnt/sd/boot.scr \
-   "$HOME/build/bbb-assets/boot-initramfs.scr"
-sudo umount /mnt/sd
-```
 ## rootfs
 initramfs其实是捆在内核里的rootfs，因为和内核绑定，所以可以在没有存储驱动的时候拿到用户态。但是initramfs下电即失，真实的环境肯定还是依赖非易失存储上的rootfs。
 - 重建内核
@@ -1071,20 +1055,76 @@ hello-from-rootfs
 ~ #
 ```
 可以看到，启动后使用rootfs作为根目录了。并且下电持久化也是正常的。
-- 存档记录
-``` bash
-cp $HOME/build/bringup-kernel/arch/arm/boot/zImage \
-   $HOME/build/bbb-assets/zImage-rootfs
-cp $HOME/build/bringup-kernel/.config \
-   $HOME/build/bbb-assets/config-rootfs
-cp $HOME/build/boot-rootfs.cmd \
-   $HOME/build/bbb-assets/boot-rootfs.cmd
-cp $HOME/build/boot-rootfs.scr \
-   $HOME/build/bbb-assets/boot-rootfs.scr
-cp $HOME/build/bringup-kernel/arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb \
-   $HOME/build/bbb-assets/am335x-boneblack.dtb
-```
 # fastboot
+## 为什么用fastboot
+在此之前，所有的系统烧录更新，都需要反复插拔SD卡，直观但是需要人工干预，也不利于自动化的操作。
+而fastboot是U-Boot自带的一条USB通道，使得BBB成为一个USB device，而host就可以通过USB通道直接写入mmc分区。最早fastboot是Android的刷写协议，但U-Boot实现的通用的，不依赖Android用户态。
+常见的fastboot用法有
+- fastboot flash <target> <image> 整分区写，等价于将img 通过`dd`写入分区，不可以操作单文件，同时uboot所在整分区被刷写的话uboot.env也丢了。
+- fastboot getvar 查询分区信息
+- fastboot reboot 触发重启
+因为fastboot工作在U-Boot阶段，所以它是不依赖kernel或者rootfs的。
+我们未来希望是通过fastboot + A/B bank组合一起工作，但是本章节先不做AB分区，只验证fastboot的可行性。
+## 确认当前fastboot的状态
+因为我们编译U-Boot的时候默认就带了fastboot，可以看
+``` bash
+grep -E '^CONFIG_(CMD_FASTBOOT|FASTBOOT|USB_FUNCTION_FASTBOOT|FASTBOOT_FLASH|FASTBOOT_FLASH_MMC|USB_MUSB_GADGET|USB_GADGET)=' \
+  $HOME/build/bringup-uboot/.config
+```
+所以我们的fastboot应该是直接可用的。另外需要注意，操作flash的时候需要带前缀0:N，其中0表示SD，1是emmc，如果不指明的话默认会刷到EMMC里，这应该是因为另一个配置项CONFIG_FASTBOOT_FLASH_MMC_DEV=1。
+- target 侧
+需要重启板子，并在u-boot阶段打断
+``` bash
+unbind ethernet 3
+fastboot usb 0
+```
+因为BBB的miniUSB在U-Boot里同时被RNDIS ethernet gadget占用。直接 `fastboot usb 0` 可能抢不到 UDC，所以要先解绑再启动fastboot。解绑过程中出现类似
+```
+Clock disable failed for 0x44e0001c idlest 0x10000
+Cannot find device 3 of class ethernet
+```
+的报错都是可以无视的，前者是因为时钟没关掉，后者是因为已经解绑过，不会影响后续我们开fastboot。
+- host 侧
+``` bash
+$ fastboot devices
+3816BBBK05DD    fastboot
+```
+能读到设备说明host 已经识别到板子了，链路是ok的。
+``` bash
+fastboot getvar partition-size:0:1
+fastboot getvar partition-type:0:1
+```
+预期`0:1`是64M FAT。（getvar partition-size是32位截断的，大于4G的分区会显示0）。
+## 制作镜像并刷写
+按照我们的现状，如果制作一个p1的镜像，需要包含bootloader（MLO与u-boot.img，千万不能漏了，不然无法启动又要插拔SD卡救命了）、kernel、DTB、boot.scr。
+``` bash
+rm -f $HOME/build/p1-fastboot.img
+truncate -s 64M $HOME/build/p1-fastboot.img
+mformat -i $HOME/build/p1-fastboot.img -F -v BOOT ::
+
+mcopy -i $HOME/build/p1-fastboot.img $HOME/build/bringup-uboot/MLO ::/MLO
+mcopy -i $HOME/build/p1-fastboot.img $HOME/build/bringup-uboot/u-boot.img ::/u-boot.img
+mcopy -i $HOME/build/p1-fastboot.img $HOME/build/bringup-kernel/arch/arm/boot/zImage ::/zImage
+mcopy -i $HOME/build/p1-fastboot.img $HOME/build/bringup-kernel/arch/arm/boot/dts/ti/omap/am335x-boneblack.dtb ::/am335x-boneblack.dtb
+mcopy -i $HOME/build/p1-fastboot.img $HOME/build/boot-rootfs.scr ::/boot.scr
+
+mdir -i $HOME/build/p1-fastboot.img ::/
+sha256sum $HOME/build/p1-fastboot.img
+```
+之后就可以通过fastboot通道刷入了
+``` bash
+fastboot flash 0:1 $HOME/build/p1-fastboot.img
+fastboot reboot
+```
+同理，也可以针对P2
+``` bash
+# img
+/usr/sbin/mke2fs -t ext4 -d $HOME/build/bringup-rootfs -F -L ROOTFS \
+  $HOME/build/rootfs-fastboot.ext4 1G
+# flash
+fastboot flash 0:2 $HOME/build/rootfs-fastboot.ext4
+fastboot reboot
+```
 
 # A/B + Meta分区
 
