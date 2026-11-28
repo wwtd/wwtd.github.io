@@ -19,7 +19,7 @@ tags:
 闲言少叙，开工~
 
 ## 关于BBB
-BeagleBone Black也叫BBB，是社区里广泛使用的开源卡片电脑，生态位类似树莓派，又一些差异。BBB的详细介绍可以参见[What is BeagleBone® Black?](https://www.beagleboard.org/boards/beaglebone-black)。包括原理图、手册等也可以从官方网站上获得，全部开源。
+BeagleBone Black也叫BBB，是社区里广泛使用的开源卡片电脑，生态位类似树莓派，又有一些差异。BBB的详细介绍可以参见[What is BeagleBone® Black?](https://www.beagleboard.org/boards/beaglebone-black)。包括原理图、手册等也可以从官方网站上获得，全部开源。
 关系BBB的详细信息从[BBB官方主页](https://docs.beagle.cc/boards/beaglebone/black/index.html)可以获得，这里简单提几个和我们的用途直接相关的内容：
 
 - CPU：**TI AM3358**，1GHz ARM® Cortex-A8
